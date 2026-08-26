@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>WeTypeAudioGuard</AssemblyName>
     <RootNamespace>WeTypeAudioGuard</RootNamespace>
-    <Version>0.1.1</Version>
+    <Version>0.2.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 </Project>
