@@ -8,7 +8,7 @@ internal sealed class TrayAppContext : ApplicationContext
     private readonly SettingsStore _store;
     private readonly AppLogger _logger;
     private readonly NotifyIcon _tray;
-    private readonly AudioGuardService _service;
+    private readonly EventAudioGuardService _service;
     private readonly SynchronizationContext _uiContext;
     private SettingsForm? _settingsForm;
 
@@ -58,7 +58,7 @@ internal sealed class TrayAppContext : ApplicationContext
         ApplyStartup(_store.Snapshot().StartWithWindows);
         RefreshMenu();
 
-        _service = new AudioGuardService(() => _store.Snapshot(), _logger);
+        _service = new EventAudioGuardService(() => _store.Snapshot(), _logger);
         _service.CaptureStateChanged += OnCaptureStateChanged;
         _logger.Write("[APP] started");
     }
