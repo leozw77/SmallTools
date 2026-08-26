@@ -11,7 +11,7 @@ internal sealed class AudioGuardService : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Dictionary<string, SavedSession> _idleBaseline = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SavedSession> _original = new(StringComparer.Ordinal);
-    private static readonly Guid ChangeContext = new("E4056C42-CDE2-4945-B786-38D5626F8F01");
+    private static Guid ChangeContext = new("E4056C42-CDE2-4945-B786-38D5626F8F01");
     private volatile bool _isCapturing;
 
     public bool IsCapturing => _isCapturing;
@@ -56,6 +56,8 @@ internal sealed class AudioGuardService : IDisposable
                     _log.Write("[VOICE END] original audio state restored");
                     RaiseStateChanged(false);
 
+                    // WeType can perform delayed cleanup after capture stops. Re-apply once
+                    // after that window so its cleanup cannot leave a session muted.
                     if (!_cts.Token.WaitHandle.WaitOne(1000))
                     {
                         if (!IsWeTypeCaptureActive(enumerator))
@@ -71,6 +73,9 @@ internal sealed class AudioGuardService : IDisposable
                 }
                 else
                 {
+                    // Keep a pre-voice snapshot while idle. In the diagnostic trace, WeType
+                    // sets render sessions to Mute at essentially the same instant its capture
+                    // session becomes Active, so snapshotting only after detection is too late.
                     RefreshIdleBaseline(enumerator);
                 }
 
@@ -150,9 +155,13 @@ internal sealed class AudioGuardService : IDisposable
     private void BeginCapture(IMMDeviceEnumerator enumerator, AppSettings settings)
     {
         _original.Clear();
+
+        // Copy the most recent known-good state captured before WeType became active.
         foreach (var pair in _idleBaseline)
             _original[pair.Key] = pair.Value;
 
+        // Merge any sessions that appeared after the last idle baseline sample. If a
+        // currently-active new session is already muted, WeType most likely muted it.
         foreach (var live in EnumerateRenderSessions(enumerator))
         {
             try
@@ -174,6 +183,8 @@ internal sealed class AudioGuardService : IDisposable
         }
 
         _log.Write($"[VOICE START] baseline={_idleBaseline.Count}, protected={_original.Count}, target={settings.VoicePercent}%");
+
+        // Do not wait for the next loop before undoing WeType's mute.
         EnforcePolicy(enumerator, settings);
     }
 
@@ -212,6 +223,8 @@ internal sealed class AudioGuardService : IDisposable
 
                 if (!_original.TryGetValue(live.Key, out var original))
                 {
+                    // A session created while voice input is already active cannot be observed pre-WeType.
+                    // If it is actively rendering and already muted, assume WeType muted it.
                     bool assumedOriginalMute = live.Mute && live.State != AudioSessionState.Active;
                     original = new SavedSession(live.Key, live.ProcessId, live.ProcessName, live.Volume, assumedOriginalMute);
                     _original[live.Key] = original;
@@ -344,6 +357,9 @@ internal sealed class AudioGuardService : IDisposable
 
     private static bool ShouldScaleVolume(string processName, uint pid)
     {
+        // audiodg is the Windows audio engine/APO host. WeType may mute its session too,
+        // so it must be unmuted, but scaling it together with the player would multiply
+        // attenuation (e.g. 30% x 30%). System Sounds are treated the same way.
         if (pid == 0) return false;
         return !processName.Equals("audiodg", StringComparison.OrdinalIgnoreCase);
     }
