@@ -1,4 +1,4 @@
-# WeTypeAudioGuard
+# WeTypeAudioGuard v0.1.1
 
 Windows 托盘小工具：阻止微信输入法语音识别时强制静音后台音频，或按用户设置临时降低后台音量。
 
