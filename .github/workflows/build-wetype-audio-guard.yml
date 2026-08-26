@@ -1,0 +1,54 @@
+name: Build WeTypeAudioGuard
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "WeTypeAudioGuard/**"
+      - ".github/workflows/build-wetype-audio-guard.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "WeTypeAudioGuard/**"
+      - ".github/workflows/build-wetype-audio-guard.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore .\WeTypeAudioGuard\WeTypeAudioGuard.csproj
+
+      - name: Publish win-x64 single-file
+        run: >-
+          dotnet publish .\WeTypeAudioGuard\WeTypeAudioGuard.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:PublishReadyToRun=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          -o .\dist\WeTypeAudioGuard
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path .\dist\WeTypeAudioGuard\* -DestinationPath .\dist\WeTypeAudioGuard-win-x64.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeTypeAudioGuard-win-x64
+          path: .\dist\WeTypeAudioGuard-win-x64.zip
+          if-no-files-found: error
