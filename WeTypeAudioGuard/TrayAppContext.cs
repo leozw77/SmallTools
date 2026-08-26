@@ -71,6 +71,7 @@ internal sealed class TrayAppContext : ApplicationContext
         ApplyStartup(s.StartWithWindows);
         RefreshMenu();
         _settingsForm?.LoadFrom(s);
+        _service.NotifySettingsChanged();
     }
 
     private void SetPercent(int percent)
@@ -106,6 +107,7 @@ internal sealed class TrayAppContext : ApplicationContext
             _store.Update(s);
             ApplyStartup(s.StartWithWindows);
             RefreshMenu();
+            _service.NotifySettingsChanged();
         };
         _settingsForm.Show();
         _settingsForm.Activate();
