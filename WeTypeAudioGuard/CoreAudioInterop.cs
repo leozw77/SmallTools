@@ -5,6 +5,15 @@ namespace WeTypeAudioGuard;
 internal enum EDataFlow { eRender = 0, eCapture = 1, eAll = 2 }
 internal enum ERole { eConsole = 0, eMultimedia = 1, eCommunications = 2 }
 internal enum AudioSessionState { Inactive = 0, Active = 1, Expired = 2 }
+internal enum AudioSessionDisconnectReason
+{
+    DeviceRemoval = 0,
+    ServerShutdown = 1,
+    FormatChanged = 2,
+    SessionLogoff = 3,
+    SessionDisconnected = 4,
+    ExclusiveModeOverride = 5
+}
 
 [Flags]
 internal enum CLSCTX : uint
@@ -97,6 +106,24 @@ internal interface ISimpleAudioVolume
     [PreserveSig] int GetMasterVolume(out float level);
     [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid eventContext);
     [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+}
+
+[ComVisible(true), Guid("24918ACC-64B3-37C1-8CA9-74A66E9957A8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioSessionEvents
+{
+    [PreserveSig] int OnDisplayNameChanged([MarshalAs(UnmanagedType.LPWStr)] string newDisplayName, IntPtr eventContext);
+    [PreserveSig] int OnIconPathChanged([MarshalAs(UnmanagedType.LPWStr)] string newIconPath, IntPtr eventContext);
+    [PreserveSig] int OnSimpleVolumeChanged(float newVolume, [MarshalAs(UnmanagedType.Bool)] bool newMute, IntPtr eventContext);
+    [PreserveSig] int OnChannelVolumeChanged(uint channelCount, IntPtr newChannelVolumeArray, uint changedChannel, IntPtr eventContext);
+    [PreserveSig] int OnGroupingParamChanged(IntPtr newGroupingParam, IntPtr eventContext);
+    [PreserveSig] int OnStateChanged(AudioSessionState newState);
+    [PreserveSig] int OnSessionDisconnected(AudioSessionDisconnectReason disconnectReason);
+}
+
+[ComVisible(true), Guid("641DD20B-4D41-49CC-ABA3-174B9477BB08"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioSessionNotification
+{
+    [PreserveSig] int OnSessionCreated(IAudioSessionControl newSession);
 }
 
 internal static class ComUtil
