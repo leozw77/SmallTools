@@ -31,14 +31,6 @@ jobs:
         shell: pwsh
         run: dotnet restore .\WeTypeAudioGuard\WeTypeAudioGuard.csproj
 
-      - name: Patch build compatibility
-        shell: pwsh
-        run: |
-          $path = '.\WeTypeAudioGuard\AudioGuardService.cs'
-          $text = Get-Content $path -Raw
-          $text = $text.Replace('private static readonly Guid ChangeContext', 'private static Guid ChangeContext')
-          Set-Content -Path $path -Value $text -Encoding utf8
-
       - name: Publish win-x64 single-file
         shell: pwsh
         run: >-
