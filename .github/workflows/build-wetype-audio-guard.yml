@@ -31,15 +31,15 @@ jobs:
         shell: pwsh
         run: dotnet restore .\WeTypeAudioGuard\WeTypeAudioGuard.csproj
 
-      - name: Publish win-x64 single-file
+      - name: Publish compact .NET 8 win-x64
         shell: pwsh
         run: >-
           dotnet publish .\WeTypeAudioGuard\WeTypeAudioGuard.csproj
           -c Release
           -r win-x64
-          --self-contained true
+          --self-contained false
           -p:PublishSingleFile=true
-          -p:PublishReadyToRun=true
+          -p:PublishReadyToRun=false
           -p:DebugType=None
           -p:DebugSymbols=false
           -o .\dist\WeTypeAudioGuard
@@ -47,11 +47,11 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          Compress-Archive -Path .\dist\WeTypeAudioGuard\* -DestinationPath .\dist\WeTypeAudioGuard-win-x64.zip -Force
+          Compress-Archive -Path .\dist\WeTypeAudioGuard\* -DestinationPath .\dist\WeTypeAudioGuard-net8-win-x64.zip -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WeTypeAudioGuard-win-x64
-          path: .\dist\WeTypeAudioGuard-win-x64.zip
+          name: WeTypeAudioGuard-net8-win-x64
+          path: .\dist\WeTypeAudioGuard-net8-win-x64.zip
           if-no-files-found: error
