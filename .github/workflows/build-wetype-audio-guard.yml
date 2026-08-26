@@ -16,6 +16,7 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 10
     permissions:
       contents: read
 
@@ -27,9 +28,11 @@ jobs:
           dotnet-version: "8.0.x"
 
       - name: Restore
+        shell: pwsh
         run: dotnet restore .\WeTypeAudioGuard\WeTypeAudioGuard.csproj
 
       - name: Publish win-x64 single-file
+        shell: pwsh
         run: >-
           dotnet publish .\WeTypeAudioGuard\WeTypeAudioGuard.csproj
           -c Release
