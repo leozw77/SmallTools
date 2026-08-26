@@ -4,8 +4,8 @@ namespace WeTypeAudioGuard;
 
 internal enum EDataFlow { eRender = 0, eCapture = 1, eAll = 2 }
 internal enum ERole { eConsole = 0, eMultimedia = 1, eCommunications = 2 }
-internal enum AudioSessionState { Inactive = 0, Active = 1, Expired = 2 }
-internal enum AudioSessionDisconnectReason
+public enum AudioSessionState { Inactive = 0, Active = 1, Expired = 2 }
+public enum AudioSessionDisconnectReason
 {
     DeviceRemoval = 0,
     ServerShutdown = 1,
@@ -67,7 +67,7 @@ internal interface IAudioSessionEnumerator
 }
 
 [ComImport, Guid("F4B1A599-7266-4319-A8CA-E70ACB11E8CD"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IAudioSessionControl
+public interface IAudioSessionControl
 {
     [PreserveSig] int GetState(out AudioSessionState state);
     [PreserveSig] int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string displayName);
@@ -109,7 +109,7 @@ internal interface ISimpleAudioVolume
 }
 
 [ComVisible(true), Guid("24918ACC-64B3-37C1-8CA9-74A66E9957A8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IAudioSessionEvents
+public interface IAudioSessionEvents
 {
     [PreserveSig] int OnDisplayNameChanged([MarshalAs(UnmanagedType.LPWStr)] string newDisplayName, IntPtr eventContext);
     [PreserveSig] int OnIconPathChanged([MarshalAs(UnmanagedType.LPWStr)] string newIconPath, IntPtr eventContext);
@@ -121,7 +121,7 @@ internal interface IAudioSessionEvents
 }
 
 [ComVisible(true), Guid("641DD20B-4D41-49CC-ABA3-174B9477BB08"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IAudioSessionNotification
+public interface IAudioSessionNotification
 {
     [PreserveSig] int OnSessionCreated(IAudioSessionControl newSession);
 }
