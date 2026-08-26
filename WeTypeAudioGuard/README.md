@@ -15,6 +15,10 @@ Windows 托盘小工具：阻止微信输入法语音识别时强制静音后台
 - 支持开机启动。
 - `settings.json` 和 `WeTypeAudioGuard.log` 都保存在 EXE 所在文件夹。
 
+## 运行要求
+
+轻量发布包不再内置 .NET 运行时，需要电脑已安装 .NET 8 Desktop Runtime（Windows x64）。
+
 ## 原理
 
 微信输入法开始语音时会将正在播放的 Windows Core Audio Session 设为 Mute。该程序监听 `wetype_*` Capture Session，语音期间持续保护 Render Session：取消由微信输入法造成的 Mute，并按用户设置维持目标音量。
@@ -22,5 +26,5 @@ Windows 托盘小工具：阻止微信输入法语音识别时强制静音后台
 ## 构建
 
 ```powershell
-dotnet publish .\WeTypeAudioGuard.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o .\publish
+dotnet publish .\WeTypeAudioGuard.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o .\publish
 ```
