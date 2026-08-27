@@ -47,7 +47,7 @@ public sealed partial class MainForm
         sb.AppendLine("# AI 观影短评实验台完整调试日志");
         sb.AppendLine();
         sb.AppendLine($"- 导出时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-        sb.AppendLine("- 程序版本：v0.1-preview.2");
+        sb.AppendLine($"- 程序版本：v{Application.ProductVersion}");
         sb.AppendLine("- API Key：**未导出 / 已排除**");
         sb.AppendLine();
 
