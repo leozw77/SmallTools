@@ -1,74 +1,113 @@
-# AI 观影短评实验台 v0.1-preview.1
+# AI 观影短评实验台 v0.1-preview.2
 
-独立 Prompt Lab，用于在正式接入“观影助手”前稳定测试三轮 AI 采访流程。
+独立 Prompt Lab，用于在正式接入“观影助手”前测试 AI 三轮采访、豆瓣事实定位和 Prompt 迭代。
 
-## 本版目标
+## preview.2 重点
 
-- 复用旧 `AiMovieReview_TestHarness v0.5-preview.7` 的字幕清洗、Prompt 编辑、结构化问答、Token/耗时调试思路。
-- 不再写死 DeepSeek；支持 Provider / Base URL / Model / API Key 切换。
-- 内置 Qwen / 百炼、DeepSeek、GLM / 智谱、Custom OpenAI-compatible 预设。
-- 从“一次生成10题”改为三轮采访：`3 + 3 + 3 + 最终自由发言`。
-- 每题模型只返回 `question + 3 options`；程序固定渲染 A/B/C 多选、D“都不符合”、自由补充，避免模型漏选项。
-- 用户自由补充权重高于选项；最后自由发言属于最高权重。
-- 支持字幕 SRT / ASS / SSA 清洗；有字幕时作为高权重剧情事实依据，无字幕时可使用模型供应商联网搜索。
-- 支持人物/实体别名归一，重点观察语音输入的“老扎/老张/老沙/老三”类漂移。
-- Thinking 默认关闭。
-- 显示输入 / 输出 / 缓存 / reasoning Token、首 Token 时间、总耗时和按当前配置价格估算的人民币费用。
-- 保存/载入测试案例，方便同一电影同一句初评反复 A/B 测试 Prompt。
-- Prompt 可直接编辑、导入导出；每次覆盖自定义 Prompt 时旧版本自动进入 LocalAppData History。
+### 1. 豆瓣链接改为必填锚点
 
-## Provider 说明
+不再要求用户手填电影名。输入必须是：
 
-### Qwen / 百炼
+```text
+https://movie.douban.com/subject/<数字ID>/
+```
 
-默认：
+第一轮成功后，影片名由事实定位结果自动写入只读框。
 
-- Base URL: `https://dashscope.aliyuncs.com/compatible-mode/v1`
-- Model: `qwen3.7-flash`
-- 联网搜索：支持
-- Thinking：支持，默认关闭
-- 默认估价（输入 <= 32K）：输入 ¥0.2/M、输出 ¥0.8/M、缓存输入 ¥0.04/M
+### 2. 第一轮内部强制事实定位，不增加额外用户回合
 
-Base URL、模型名、价格都可直接编辑，不写死。
+Qwen / 百炼使用 OpenAI-compatible Responses API：
 
-### DeepSeek
+```text
+同一次第1轮 API
+→ web_extractor 强制读取指定豆瓣 URL
+→ 必要时 web_search 补具体场景/人物/台词事实
+→ 输出 factLocalization
+→ 直接输出第1轮3个主观采访问题
+```
 
-默认：
+程序会检查 `web_extractor` 是否真的访问了指定 `/subject/<id>/`；没有访问就停止第一轮，避免在错误电影事实上继续采访。
 
-- Base URL: `https://api.deepseek.com`
-- Model: `deepseek-v4-flash`
-- Thinking：支持，默认关闭
-- 原生 Chat Completions 预设不声明内置联网搜索
+第二、三轮不重新开放泛搜索，只使用第一轮已验证事实和用户回答。
 
-### GLM / 智谱
+### 3. 禁止让用户替 AI 回答电影事实
 
-默认：
+Prompt 明确禁止把以下内容作为正常采访题：
 
-- Base URL: `https://open.bigmodel.cn/api/paas/v4`
-- Model: `glm-4.7-flash`
-- 联网搜索：使用 `web_search` 工具
-- Thinking：支持，默认关闭
-- 价格默认 0，便于测试当前免费 Flash；若价格变化可在界面直接修改
+- “这句话是谁对谁说的？”
+- “当时发生了什么？”
+- “这个人物是不是已经知道自己不行了？”
 
-## 三轮采访
+人物死亡、心理、动作、镜头等客观前提如果没有验证，不能塞进问题或 A/B/C 选项。
 
-第一轮：发现观点——感受来源、真正焦点、初始记忆点与整体评分的权重。
+### 4. 实体只允许“验证后锁定”
 
-第二轮：取得材料——例子、原因、变化/影响/比较；禁止重复已获得的信息。
+实体需要同时满足：
 
-第三轮：收束观点——权衡、评分/总体判断、余味；原则上不再开新主题。
+- `status = verified`
+- `confidence = high`
+- `evidence` 非空
 
-第三轮后由程序固定显示：
+才能进入后续锁定实体。低置信度、语音近音但没有证据的名字只能留在 `uncertainEntities`，不能自动把不同角色合并。
 
-> 还有没有什么刚才没问到，但你特别想说的？
+### 5. 完整日志
+
+新增：
+
+- **导出完整日志到桌面**：直接生成 Markdown；
+- **复制完整日志**：完整内容进入剪贴板。
+
+日志包含：
+
+- Provider / Base URL / Model / Thinking / 价格；
+- 豆瓣链接 / Subject ID / 识别影片 / 评分 / 初始评论；
+- 字幕信息与清洗后的完整字幕；
+- 第一轮事实定位、来源、工具调用、已验证/未确认实体与事实；
+- 每轮事实快照；
+- 三轮每道问题、A/B/C/D 全部选项、用户勾选和自由补充；
+- 最终自由发言与最终短评；
+- 当前采访 Prompt 与短评 Prompt 全文；
+- 每次 API 的 Token、缓存 Token、Reasoning Token、首 Token、总耗时、估算费用；
+- web_search / web_extractor 调用次数；
+- 模型 Content、Request JSON、Raw Response；
+- Provider 显式返回的 reasoning summary（若存在）。
+
+**API Key 永不写入日志。**
+
+### 6. UI 只修可用性，不重设计
+
+- 顶部输入区改为可滚动/自动撑开；
+- 操作按钮允许换行；
+- 三轮问题卡根据窗口宽度调整；
+- 修复 125% / 150% DPI 下容易遮挡、裁切的问题；
+- 增加“第一轮事实定位 / 豆瓣读取”窗口。
+
+## 继续保留的能力
+
+- Qwen / DeepSeek / GLM / Custom OpenAI-compatible Provider 切换；
+- Prompt 编辑、导入、导出、历史备份；
+- SRT / ASS / SSA 字幕清洗；
+- 3 + 3 + 3 三轮采访；
+- 程序固定渲染 A/B/C 多选 + D 都不符合 + 自由补充；
+- 第三轮后固定自由发言；
+- 最终短评 ≤330 字；
+- Token / 耗时 / 原始请求响应调试。
+
+## Qwen 默认配置
+
+```text
+Base URL: https://dashscope.aliyuncs.com/compatible-mode/v1
+Model: qwen3.7-flash
+Thinking: OFF
+```
+
+第一轮会从同一个 Base URL 调用 `/responses`；后续采访和最终短评使用 `/chat/completions`。
 
 ## 构建
-
-Windows + .NET 8 Desktop Runtime 运行发布包。
-
-源码构建：
 
 ```powershell
 dotnet restore .\AiMovieReviewLab.csproj
 dotnet build .\AiMovieReviewLab.csproj -c Release
 ```
+
+GitHub Actions 发布为 framework-dependent .NET 8 win-x64 包，需要 Windows 已安装 .NET 8 Desktop Runtime。
