@@ -76,7 +76,7 @@ public sealed partial class MainForm : Form
         _interviewEngine = new InterviewEngine(_client, _responsesClient);
         _reviewEngine = new ReviewEngine(_client);
 
-        Text = "AI 观影短评实验台 v0.1-preview.2｜豆瓣事实定位 · 多模型 · 三轮采访";
+        Text = "AI 观影短评实验台 v0.1-preview.3｜豆瓣事实定位 · 多模型 · 三轮采访";
         Width = 1580;
         Height = 980;
         MinimumSize = new Size(1180, 760);
@@ -101,10 +101,8 @@ public sealed partial class MainForm : Form
     {
         var root = new SplitContainer
         {
-            Dock = DockStyle.Fill,
-            SplitterDistance = 900,
-            Panel1MinSize = 620,
-            Panel2MinSize = 420
+            Name = "RootSplit",
+            Dock = DockStyle.Fill
         };
         Controls.Add(root);
 
