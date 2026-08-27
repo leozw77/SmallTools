@@ -70,11 +70,11 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          Compress-Archive -Path .\dist\AiMovieReviewLab\* -DestinationPath .\dist\AiMovieReviewLab-v0.1-preview.4-net8-win-x64.zip -Force
+          Compress-Archive -Path .\dist\AiMovieReviewLab\* -DestinationPath .\dist\AiMovieReviewLab-v0.1-preview.5-net8-win-x64.zip -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AiMovieReviewLab-v0.1-preview.4-net8-win-x64
-          path: .\dist\AiMovieReviewLab-v0.1-preview.4-net8-win-x64.zip
+          name: AiMovieReviewLab-v0.1-preview.5-net8-win-x64
+          path: .\dist\AiMovieReviewLab-v0.1-preview.5-net8-win-x64.zip
           if-no-files-found: error
