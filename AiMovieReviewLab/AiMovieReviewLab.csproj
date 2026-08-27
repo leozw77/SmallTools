@@ -9,7 +9,7 @@
     <RootNamespace>AiMovieReviewLab</RootNamespace>
     <AssemblyName>AI观影短评实验台</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.1.0-preview.4</Version>
+    <Version>0.1.0-preview.5</Version>
   </PropertyGroup>
 
   <ItemGroup>
