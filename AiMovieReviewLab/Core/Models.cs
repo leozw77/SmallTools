@@ -17,6 +17,7 @@ public sealed class ProviderProfile
     public string BaseUrl { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
     public bool SupportsWebSearch { get; set; }
+    public bool SupportsWebExtractor { get; set; }
     public bool SupportsThinking { get; set; } = true;
     public decimal InputPricePerMillion { get; set; }
     public decimal OutputPricePerMillion { get; set; }
@@ -57,6 +58,40 @@ public sealed class EntityAlias
     public string Canonical { get; set; } = string.Empty;
     public List<string> Aliases { get; set; } = [];
     public string Note { get; set; } = string.Empty;
+    public string Status { get; set; } = "uncertain";
+    public string Confidence { get; set; } = "low";
+    public string Evidence { get; set; } = string.Empty;
+}
+
+public sealed class FactLocalization
+{
+    public string DoubanReadStatus { get; set; } = "unknown";
+    public string SubjectId { get; set; } = string.Empty;
+    public string MovieTitle { get; set; } = string.Empty;
+    public string MovieIdentity { get; set; } = string.Empty;
+    public bool NeedsSceneLocalization { get; set; }
+    public string SceneSummary { get; set; } = string.Empty;
+    public string SceneConfidence { get; set; } = "unknown";
+    public bool FallbackSearchUsed { get; set; }
+    public List<EntityAlias> VerifiedEntities { get; set; } = [];
+    public List<EntityAlias> UncertainEntities { get; set; } = [];
+    public List<string> VerifiedFacts { get; set; } = [];
+    public List<string> Unresolved { get; set; } = [];
+    public List<string> Sources { get; set; } = [];
+    public string ToolEvidenceSummary { get; set; } = string.Empty;
+}
+
+public sealed class FactSnapshot
+{
+    public int Round { get; set; }
+    public DateTime Time { get; set; } = DateTime.Now;
+    public string DoubanReadStatus { get; set; } = "unknown";
+    public string SceneSummary { get; set; } = string.Empty;
+    public string SceneConfidence { get; set; } = "unknown";
+    public List<EntityAlias> VerifiedEntities { get; set; } = [];
+    public List<string> VerifiedFacts { get; set; } = [];
+    public List<string> Unresolved { get; set; } = [];
+    public List<string> Sources { get; set; } = [];
 }
 
 public sealed class InterviewQuestion
@@ -72,6 +107,7 @@ public sealed class InterviewRound
 {
     public int Round { get; set; }
     public string Strategy { get; set; } = string.Empty;
+    public FactLocalization? FactLocalization { get; set; }
     public List<EntityAlias> Entities { get; set; } = [];
     public List<string> KnownFacts { get; set; } = [];
     public List<InterviewQuestion> Questions { get; set; } = [];
@@ -88,6 +124,8 @@ public sealed class QuestionAnswer
 
 public sealed class InterviewSession
 {
+    public string DoubanUrl { get; set; } = string.Empty;
+    public string DoubanSubjectId { get; set; } = string.Empty;
     public string MovieTitle { get; set; } = string.Empty;
     public int Rating { get; set; } = 5;
     public string InitialComment { get; set; } = string.Empty;
@@ -95,8 +133,17 @@ public sealed class InterviewSession
     public List<EntityAlias> Entities { get; set; } = [];
     public List<string> KnownFacts { get; set; } = [];
     public List<InterviewRound> Rounds { get; set; } = [];
+    public List<FactSnapshot> FactSnapshots { get; set; } = [];
     public List<QuestionAnswer> Answers { get; set; } = [];
     public string FinalFreeText { get; set; } = string.Empty;
+}
+
+public sealed class ToolCallRecord
+{
+    public string Type { get; set; } = string.Empty;
+    public string QueryOrGoal { get; set; } = string.Empty;
+    public List<string> Urls { get; set; } = [];
+    public string Output { get; set; } = string.Empty;
 }
 
 public sealed class AiUsageMetrics
@@ -112,6 +159,9 @@ public sealed class AiUsageMetrics
     public int ReasoningCharacters { get; set; }
     public bool WebSearchRequested { get; set; }
     public bool ThinkingEnabled { get; set; }
+    public int WebSearchCount { get; set; }
+    public int WebExtractorCount { get; set; }
+    public string ApiMode { get; set; } = "Chat Completions";
     public string Model { get; set; } = string.Empty;
     public decimal EstimatedCostCny { get; set; }
 }
@@ -121,6 +171,8 @@ public sealed class AiCallResult
     public string Content { get; set; } = string.Empty;
     public string RequestJson { get; set; } = string.Empty;
     public string RawResponse { get; set; } = string.Empty;
+    public string ReasoningSummary { get; set; } = string.Empty;
+    public List<ToolCallRecord> ToolCalls { get; set; } = [];
     public AiUsageMetrics Metrics { get; set; } = new();
 }
 
@@ -131,6 +183,8 @@ public sealed class AiCallRecord
     public string RequestJson { get; set; } = string.Empty;
     public string RawResponse { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
+    public string ReasoningSummary { get; set; } = string.Empty;
+    public List<ToolCallRecord> ToolCalls { get; set; } = [];
     public AiUsageMetrics Metrics { get; set; } = new();
 }
 
@@ -143,6 +197,7 @@ public sealed class ReviewOutput
 
 public sealed class SavedTestCase
 {
+    public string DoubanUrl { get; set; } = string.Empty;
     public string MovieTitle { get; set; } = string.Empty;
     public int Rating { get; set; } = 5;
     public string InitialComment { get; set; } = string.Empty;
