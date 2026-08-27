@@ -169,6 +169,7 @@ public sealed partial class MainForm
                 ? "第一轮没有返回事实定位对象。"
                 : "当前 Provider 不支持强制 web_extractor，第一轮只能退化为供应商联网/提示词定位。";
 
+        var safelyLocked = _session?.Entities ?? [];
         var lines = new List<string>
         {
             $"豆瓣读取：{fact.DoubanReadStatus}",
@@ -178,10 +179,13 @@ public sealed partial class MainForm
             $"工具：web_extractor {call.Metrics.WebExtractorCount} 次；web_search {call.Metrics.WebSearchCount} 次"
         };
         if (!string.IsNullOrWhiteSpace(fact.SceneSummary)) lines.Add($"场景定位：{fact.SceneSummary} [{fact.SceneConfidence}]");
-        if (fact.VerifiedEntities.Count > 0)
-            lines.Add("已确认实体：" + string.Join("；", fact.VerifiedEntities.Select(x => x.Canonical)));
+        if (safelyLocked.Count > 0)
+            lines.Add("程序已锁定实体：" + string.Join("；", safelyLocked.Select(x => x.Canonical)));
+        var rejected = fact.VerifiedEntities.Where(x => !safelyLocked.Any(y => y.Canonical.Equals(x.Canonical, StringComparison.OrdinalIgnoreCase))).ToList();
+        if (rejected.Count > 0)
+            lines.Add("模型声称已验证但程序未锁定：" + string.Join("；", rejected.Select(x => x.Canonical)));
         if (fact.UncertainEntities.Count > 0)
-            lines.Add("未锁定实体：" + string.Join("；", fact.UncertainEntities.Select(x => x.Canonical)));
+            lines.Add("未确认实体：" + string.Join("；", fact.UncertainEntities.Select(x => x.Canonical)));
         if (fact.Unresolved.Count > 0)
             lines.Add("未确认：" + string.Join("；", fact.Unresolved));
         if (fact.Sources.Count > 0)
@@ -270,7 +274,7 @@ public sealed partial class MainForm
         var result = text ?? string.Empty;
         var key = _apiKey.Text.Trim();
         if (!string.IsNullOrWhiteSpace(key)) result = result.Replace(key, "[REDACTED_API_KEY]", StringComparison.Ordinal);
-        result = Regex.Replace(result, @"(?i)(Authorization\s*[:=]\s*Bearer\s+)[^\s\"']+", "$1[REDACTED]");
+        result = Regex.Replace(result, @"(?i)(Authorization\s*[:=]\s*Bearer\s+)[^\s""']+", "$1[REDACTED]");
         return result;
     }
 
