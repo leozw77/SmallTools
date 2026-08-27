@@ -22,6 +22,12 @@ public sealed class QwenResponsesClient(HttpClient httpClient)
         if (string.IsNullOrWhiteSpace(provider.Model)) throw new InvalidOperationException("Model 不能为空。");
 
         var endpoint = BuildResponsesEndpoint(provider.BaseUrl);
+
+        // DashScope Responses API currently requires thinking mode when web_extractor is enabled.
+        // This is an internal first-round requirement only: the UI Thinking switch still controls
+        // the normal Chat Completions calls used by rounds 2/3 and final review generation.
+        var effectiveThinking = true;
+
         var body = new Dictionary<string, object?>
         {
             ["model"] = provider.Model,
@@ -35,8 +41,10 @@ public sealed class QwenResponsesClient(HttpClient httpClient)
                 new { type = "web_search" },
                 new { type = "web_extractor" }
             },
-            ["tool_choice"] = "required",
-            ["enable_thinking"] = thinking
+            // Do not use tool_choice="required" here. DashScope rejects required mode when more
+            // than one tool is provided. InterviewEngine verifies after the response that
+            // web_extractor was actually called for the exact requested Douban subject URL.
+            ["enable_thinking"] = effectiveThinking
         };
 
         var requestJson = JsonSerializer.Serialize(body, JsonOptions);
@@ -57,10 +65,12 @@ public sealed class QwenResponsesClient(HttpClient httpClient)
         var metrics = new AiUsageMetrics
         {
             Model = provider.Model,
-            ThinkingEnabled = thinking,
+            ThinkingEnabled = effectiveThinking,
             WebSearchRequested = true,
             TotalElapsedMs = sw.ElapsedMilliseconds,
-            ApiMode = "Responses + web_extractor"
+            ApiMode = thinking
+                ? "Responses + web_extractor (thinking on)"
+                : "Responses + web_extractor (thinking forced for extractor)"
         };
 
         var tools = new List<ToolCallRecord>();
