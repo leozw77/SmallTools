@@ -6,6 +6,8 @@ public sealed partial class MainForm
     {
         base.OnShown(e);
 
+        Text = $"AI 观影短评实验台 v{Application.ProductVersion}｜豆瓣事实定位 · 多模型 · 三轮采访";
+
         var root = Controls.OfType<SplitContainer>().FirstOrDefault(x => x.Name == "RootSplit");
         if (root is not null)
         {
