@@ -63,6 +63,13 @@ public sealed class EntityAlias
     public string Evidence { get; set; } = string.Empty;
 }
 
+public sealed class CandidateAngle
+{
+    public string Key { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string Evidence { get; set; } = string.Empty;
+}
+
 public sealed class FactLocalization
 {
     public string DoubanReadStatus { get; set; } = "unknown";
@@ -76,6 +83,8 @@ public sealed class FactLocalization
     public List<EntityAlias> VerifiedEntities { get; set; } = [];
     public List<EntityAlias> UncertainEntities { get; set; } = [];
     public List<string> VerifiedFacts { get; set; } = [];
+    public List<CandidateAngle> CandidateAngles { get; set; } = [];
+    public List<string> DiscardedInterpretations { get; set; } = [];
     public List<string> Unresolved { get; set; } = [];
     public List<string> Sources { get; set; } = [];
     public string ToolEvidenceSummary { get; set; } = string.Empty;
@@ -99,6 +108,7 @@ public sealed class InterviewQuestion
     public string Id { get; set; } = string.Empty;
     public string Purpose { get; set; } = string.Empty;
     public string Topic { get; set; } = string.Empty;
+    public string QuestionType { get; set; } = "normal";
     public string Question { get; set; } = string.Empty;
     public List<string> Options { get; set; } = [];
 }
@@ -117,6 +127,7 @@ public sealed class QuestionAnswer
 {
     public int Round { get; set; }
     public string QuestionId { get; set; } = string.Empty;
+    public string QuestionType { get; set; } = "normal";
     public string Question { get; set; } = string.Empty;
     public List<string> SelectedOptions { get; set; } = [];
     public string FreeText { get; set; } = string.Empty;
@@ -132,6 +143,7 @@ public sealed class InterviewSession
     public string SubtitleText { get; set; } = string.Empty;
     public List<EntityAlias> Entities { get; set; } = [];
     public List<string> KnownFacts { get; set; } = [];
+    public List<CandidateAngle> CandidateAngles { get; set; } = [];
     public List<InterviewRound> Rounds { get; set; } = [];
     public List<FactSnapshot> FactSnapshots { get; set; } = [];
     public List<QuestionAnswer> Answers { get; set; } = [];
