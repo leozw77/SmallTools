@@ -50,7 +50,7 @@ public sealed partial class MainForm
             _callSelector.Items.Clear();
             _metrics.Clear();
             _finalReview.Text = "三轮完成后在这里生成短评。";
-            _factStatus.Text = $"准备事实定位…\r\n豆瓣：{canonicalUrl}\r\nSubject：{subjectId}\r\n第一轮会先强制读取指定链接，再直接生成第一轮问题。";
+            _factStatus.Text = $"准备事实定位…\r\n豆瓣：{canonicalUrl}\r\nSubject：{subjectId}\r\n第一轮会读取指定链接，必要时做一次精确搜索，同时建立第二轮发散候选。";
             _generateReview.Enabled = false;
             _nextRound.Enabled = false;
             _finalFreeText.Clear();
@@ -84,9 +84,9 @@ public sealed partial class MainForm
             return;
         }
 
-        RenderFinalFreeQuestion();
+        _session.FinalFreeText = _finalFreeText.Text.Trim();
         _finalStageReady = true;
-        _roundStatus.Text = "三轮已完成｜最后把话筒交给用户";
+        _roundStatus.Text = "三轮已完成｜9个问题 + 同页自由题已提交，可直接生成短评";
         _nextRound.Enabled = false;
         _generateReview.Enabled = true;
     }
@@ -119,7 +119,7 @@ public sealed partial class MainForm
         {
             1 => "提交本轮 → 第2轮",
             2 => "提交本轮 → 第3轮",
-            _ => "完成第三轮"
+            _ => "完成采访（含自由题）"
         };
     }
 
@@ -132,12 +132,13 @@ public sealed partial class MainForm
         var cardWidth = Math.Max(560, _questions.ClientSize.Width - 42);
         foreach (var q in round.Questions)
         {
+            var typeLabel = q.QuestionType.Equals("discovery", StringComparison.OrdinalIgnoreCase) ? "｜发散题·可多选" : string.Empty;
             var box = new GroupBox
             {
                 Width = cardWidth,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Text = $"{q.Id}｜{q.Purpose}｜{q.Topic}",
+                Text = $"{q.Id}｜{q.Purpose}｜{q.Topic}{typeLabel}",
                 Padding = new Padding(10),
                 Margin = new Padding(4, 4, 4, 12),
                 Tag = "question-card"
@@ -168,7 +169,7 @@ public sealed partial class MainForm
                 controls.Options.Add((q.Options[i], cb));
                 panel.Controls.Add(cb);
             }
-            var none = new CheckBox { AutoSize = true, Text = "D. 都不符合", Margin = new Padding(16, 2, 3, 4) };
+            var none = new CheckBox { AutoSize = true, Text = "都不符合", Margin = new Padding(16, 4, 3, 4) };
             controls.NoneCheck = none;
             panel.Controls.Add(none);
 
@@ -189,6 +190,10 @@ public sealed partial class MainForm
             _questions.Controls.Add(box);
             _answerControls[q.Id] = controls;
         }
+
+        if (round.Round == 3)
+            AppendFinalFreeQuestionCard(cardWidth);
+
         _questions.ResumeLayout();
     }
 
@@ -207,20 +212,27 @@ public sealed partial class MainForm
         }
     }
 
-    private void RenderFinalFreeQuestion()
+    private void AppendFinalFreeQuestionCard(int cardWidth)
     {
-        _questions.SuspendLayout();
-        _questions.Controls.Clear();
-        var cardWidth = Math.Max(560, _questions.ClientSize.Width - 42);
         var box = new GroupBox
         {
             Width = cardWidth,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Text = "最后自由发言｜可选｜最高权重",
-            Padding = new Padding(12)
+            Text = "固定自由题｜可选｜最高权重",
+            Padding = new Padding(12),
+            Margin = new Padding(4, 4, 4, 16),
+            Tag = "question-card"
         };
-        var panel = new FlowLayoutPanel { Width = Math.Max(520, cardWidth - 26), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        var panel = new FlowLayoutPanel
+        {
+            Width = Math.Max(520, cardWidth - 26),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Tag = "question-panel"
+        };
         panel.Controls.Add(new Label
         {
             AutoSize = true,
@@ -232,7 +244,6 @@ public sealed partial class MainForm
         panel.Controls.Add(_finalFreeText);
         box.Controls.Add(panel);
         _questions.Controls.Add(box);
-        _questions.ResumeLayout();
     }
 
     private List<QuestionAnswer> CollectCurrentAnswers(out List<string> unanswered)
@@ -260,6 +271,7 @@ public sealed partial class MainForm
             {
                 Round = _currentRound.Round,
                 QuestionId = q.Id,
+                QuestionType = q.QuestionType,
                 Question = q.Question,
                 SelectedOptions = selected,
                 FreeText = free
