@@ -73,7 +73,7 @@ public sealed partial class MainForm
     {
         using var editor = new PromptEditorForm(
             "编辑三轮采访 System Prompt",
-            "第一轮由程序同时提供强制豆瓣URL、可选字幕和web_extractor/web_search工具；第二三轮只带已验证事实与用户回答。支持 {{ROUND}}、{{ROUND_GUIDANCE}}、{{OUTPUT_SCHEMA}}。保存旧版会自动进入 History。",
+            "程序会额外附加当前硬协议：三轮九题不变；第二轮第3题固定为受控发散题并支持更多选项；第三轮同页显示固定自由题；candidateAngles 与 verifiedFacts 分离。自定义 Prompt 可以调整文风和策略，但不能覆盖这些协议。支持 {{ROUND}}、{{ROUND_GUIDANCE}}、{{OUTPUT_SCHEMA}}。",
             _interviewPromptStore, _interviewPrompt, "interview");
         if (editor.ShowDialog(this) != DialogResult.OK) return;
         _interviewPrompt = _interviewPromptStore.LoadActive();
@@ -83,7 +83,7 @@ public sealed partial class MainForm
     {
         using var editor = new PromptEditorForm(
             "编辑最终短评 System Prompt",
-            "三轮回答、自由补充、评分和第一轮已验证事实会自动送入。支持 {{WRITING_STYLE}}、{{OUTPUT_SCHEMA}}。自由文字始终高于选项。",
+            "三轮回答、自由补充、评分和第一轮已验证事实会自动送入。支持 {{WRITING_STYLE}}、{{OUTPUT_SCHEMA}}。自由文字始终高于选项；未被用户勾选的发散候选不会作为用户观点。",
             _reviewPromptStore, _reviewPrompt, "review");
         if (editor.ShowDialog(this) != DialogResult.OK) return;
         _reviewPrompt = _reviewPromptStore.LoadActive();
@@ -155,7 +155,7 @@ public sealed partial class MainForm
     {
         var m = record.Metrics;
         var first = m.FirstTokenMs > 0 ? $"{m.FirstTokenMs}ms" : "n/a";
-        var line = $"{record.Label,-8} | {m.ApiMode,-33} | {m.Model,-20} | in {m.PromptTokens,6:N0} | cache {m.CachedPromptTokens,6:N0} | out {m.CompletionTokens,5:N0} | reasoning {m.ReasoningTokens,5:N0} | first {first,7} | total {m.TotalElapsedMs,6}ms | search {m.WebSearchCount} | extract {m.WebExtractorCount} | ¥{m.EstimatedCostCny:F6}";
+        var line = $"{record.Label,-8} | {m.ApiMode,-44} | {m.Model,-20} | in {m.PromptTokens,6:N0} | cache {m.CachedPromptTokens,6:N0} | out {m.CompletionTokens,5:N0} | reasoning {m.ReasoningTokens,5:N0} | first {first,7} | total {m.TotalElapsedMs,6}ms | search {m.WebSearchCount} | extract {m.WebExtractorCount} | ¥{m.EstimatedCostCny:F6}";
         _metrics.AppendText(line + Environment.NewLine);
         var total = _callRecords.Sum(x => x.Metrics.EstimatedCostCny);
         var tokens = _callRecords.Sum(x => x.Metrics.TotalTokens);
@@ -178,6 +178,8 @@ public sealed partial class MainForm
             $"API：{call.Metrics.ApiMode}",
             $"工具：web_extractor {call.Metrics.WebExtractorCount} 次；web_search {call.Metrics.WebSearchCount} 次"
         };
+        if (call.Metrics.WebExtractorCount > 1 || call.Metrics.WebSearchCount > 1)
+            lines.Add("工具预算提示：本轮出现重复工具调用；目标预算是 extractor≤1、search≤1，完整次数已写入日志。 ");
         if (!string.IsNullOrWhiteSpace(fact.SceneSummary)) lines.Add($"场景定位：{fact.SceneSummary} [{fact.SceneConfidence}]");
         if (safelyLocked.Count > 0)
             lines.Add("程序已锁定实体：" + string.Join("；", safelyLocked.Select(x => x.Canonical)));
@@ -186,6 +188,10 @@ public sealed partial class MainForm
             lines.Add("模型声称已验证但程序未锁定：" + string.Join("；", rejected.Select(x => x.Canonical)));
         if (fact.UncertainEntities.Count > 0)
             lines.Add("未确认实体：" + string.Join("；", fact.UncertainEntities.Select(x => x.Canonical)));
+        if (fact.CandidateAngles.Count > 0)
+            lines.Add("第二轮发散候选：" + string.Join("；", fact.CandidateAngles.Select(x => x.Label)));
+        if (fact.DiscardedInterpretations.Count > 0)
+            lines.Add("已挡住的解释性‘事实’：" + string.Join("；", fact.DiscardedInterpretations.Take(4)));
         if (fact.Unresolved.Count > 0)
             lines.Add("未确认：" + string.Join("；", fact.Unresolved));
         if (fact.Sources.Count > 0)
