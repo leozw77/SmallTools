@@ -23,9 +23,9 @@ public sealed class QwenResponsesClient(HttpClient httpClient)
 
         var endpoint = BuildResponsesEndpoint(provider.BaseUrl);
 
-        // DashScope Responses API currently requires thinking mode when web_extractor is enabled.
-        // This is an internal first-round requirement only: the UI Thinking switch still controls
-        // the normal Chat Completions calls used by rounds 2/3 and final review generation.
+        // DashScope Responses + web_extractor requires thinking. Keep it internal to round 1,
+        // but explicitly lower the reasoning effort so factual localization does not spend most
+        // of the latency on long reasoning summaries.
         var effectiveThinking = true;
 
         var body = new Dictionary<string, object?>
@@ -41,10 +41,14 @@ public sealed class QwenResponsesClient(HttpClient httpClient)
                 new { type = "web_search" },
                 new { type = "web_extractor" }
             },
-            // Do not use tool_choice="required" here. DashScope rejects required mode when more
-            // than one tool is provided. InterviewEngine verifies after the response that
-            // web_extractor was actually called for the exact requested Douban subject URL.
-            ["enable_thinking"] = effectiveThinking
+            // web_extractor currently has to coexist with web_search, therefore required mode
+            // cannot be used. InterviewEngine verifies the exact Douban subject URL afterwards.
+            ["enable_thinking"] = effectiveThinking,
+            ["reasoning"] = new { effort = "low" },
+            ["parallel_tool_calls"] = false,
+            ["max_output_tokens"] = 1800,
+            ["temperature"] = 0.2,
+            ["store"] = false
         };
 
         var requestJson = JsonSerializer.Serialize(body, JsonOptions);
@@ -69,8 +73,8 @@ public sealed class QwenResponsesClient(HttpClient httpClient)
             WebSearchRequested = true,
             TotalElapsedMs = sw.ElapsedMilliseconds,
             ApiMode = thinking
-                ? "Responses + web_extractor (thinking on)"
-                : "Responses + web_extractor (thinking forced for extractor)"
+                ? "Responses + extractor / low reasoning / serial tools"
+                : "Responses + extractor / forced low reasoning / serial tools"
         };
 
         var tools = new List<ToolCallRecord>();
@@ -159,6 +163,8 @@ public sealed class QwenResponsesClient(HttpClient httpClient)
 
         if (metrics.WebSearchCount == 0) metrics.WebSearchCount = tools.Count(x => x.Type == "web_search");
         if (metrics.WebExtractorCount == 0) metrics.WebExtractorCount = tools.Count(x => x.Type == "web_extractor");
+        if (metrics.WebSearchCount > 1 || metrics.WebExtractorCount > 1)
+            metrics.ApiMode += " / tool budget overrun";
         metrics.EstimatedCostCny = EstimateCost(metrics, provider);
 
         return new AiCallResult
