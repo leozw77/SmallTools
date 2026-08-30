@@ -56,7 +56,7 @@ public sealed partial class MainForm
         sb.AppendLine($"- Provider：{provider.Name}");
         sb.AppendLine($"- Base URL：`{_baseUrl.Text.Trim()}`");
         sb.AppendLine($"- Model：`{_model.Text.Trim()}`");
-        sb.AppendLine($"- 第一轮强制豆瓣事实定位：是");
+        sb.AppendLine("- 第一轮强制豆瓣事实定位：是");
         sb.AppendLine($"- 第一轮允许必要时补充联网搜索：{(_webSearch.Checked ? "是" : "否")}");
         sb.AppendLine($"- Thinking：{(_thinking.Checked ? "开" : "关")}");
         sb.AppendLine($"- 输入价格：¥{_inputPrice.Value}/M Token");
@@ -142,13 +142,13 @@ public sealed partial class MainForm
                 sb.AppendLine();
                 foreach (var q in round.Questions)
                 {
-                    sb.AppendLine($"#### {q.Id}｜{q.Purpose}｜{q.Topic}");
+                    sb.AppendLine($"#### {q.Id}｜type={q.QuestionType}｜{q.Purpose}｜{q.Topic}");
                     sb.AppendLine();
                     sb.AppendLine($"**问题：** {q.Question}");
                     sb.AppendLine();
                     for (var i = 0; i < q.Options.Count; i++)
                         sb.AppendLine($"- {(char)('A' + i)}. {q.Options[i]}");
-                    sb.AppendLine("- D. 都不符合");
+                    sb.AppendLine("- 都不符合");
                     sb.AppendLine();
 
                     var answer = GetAnswerForLog(round.Round, q);
@@ -165,7 +165,9 @@ public sealed partial class MainForm
             sb.AppendLine("尚未生成采访问题。");
         }
 
-        sb.AppendLine("## 6. 最终自由发言");
+        sb.AppendLine("## 6. 第三轮同页固定自由题");
+        sb.AppendLine();
+        sb.AppendLine("**问题：** 还有没有什么刚才没问到，但你特别想说的？");
         sb.AppendLine();
         QuoteBlock(sb, _finalFreeText.Text);
         sb.AppendLine();
@@ -278,6 +280,7 @@ public sealed partial class MainForm
             {
                 Round = roundNumber,
                 QuestionId = q.Id,
+                QuestionType = q.QuestionType,
                 Question = q.Question,
                 SelectedOptions = selected,
                 FreeText = controls.FreeText.Text.Trim()
@@ -285,7 +288,7 @@ public sealed partial class MainForm
         }
 
         return _session?.Answers.LastOrDefault(x => x.Round == roundNumber && x.QuestionId.Equals(q.Id, StringComparison.OrdinalIgnoreCase))
-               ?? new QuestionAnswer { Round = roundNumber, QuestionId = q.Id, Question = q.Question };
+               ?? new QuestionAnswer { Round = roundNumber, QuestionId = q.Id, QuestionType = q.QuestionType, Question = q.Question };
     }
 
     private static void AppendFactLocalization(StringBuilder sb, FactLocalization fact)
@@ -311,9 +314,18 @@ public sealed partial class MainForm
         if (fact.UncertainEntities.Count == 0) sb.AppendLine("- 无");
         foreach (var entity in fact.UncertainEntities) sb.AppendLine($"- {FormatEntity(entity)}");
         sb.AppendLine();
-        sb.AppendLine("### 已验证事实");
+        sb.AppendLine("### 已验证事实（客观事实池）");
         if (fact.VerifiedFacts.Count == 0) sb.AppendLine("- 无");
         foreach (var item in fact.VerifiedFacts) sb.AppendLine($"- {item}");
+        sb.AppendLine();
+        sb.AppendLine("### 第二轮发散候选（不是用户观点）");
+        if (fact.CandidateAngles.Count == 0) sb.AppendLine("- 无");
+        foreach (var angle in fact.CandidateAngles)
+            sb.AppendLine($"- `{angle.Key}`｜{angle.Label}" + (string.IsNullOrWhiteSpace(angle.Evidence) ? string.Empty : $"｜Evidence: {angle.Evidence}"));
+        sb.AppendLine();
+        sb.AppendLine("### 被程序挡住的解释性‘事实’");
+        if (fact.DiscardedInterpretations.Count == 0) sb.AppendLine("- 无");
+        foreach (var item in fact.DiscardedInterpretations) sb.AppendLine($"- {item}");
         sb.AppendLine();
         sb.AppendLine("### 未确认 / 不得猜测");
         if (fact.Unresolved.Count == 0) sb.AppendLine("- 无");
