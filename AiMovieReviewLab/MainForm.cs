@@ -49,8 +49,8 @@ public sealed partial class MainForm : Form
     private readonly Label _subtitleStatus = new() { AutoSize = true, Text = "字幕：未提供" };
     private readonly Label _entityStatus = new() { AutoSize = true, MaximumSize = new Size(820, 0), Text = "实体：尚未建立" };
     private readonly FlowLayoutPanel _questions = new() { Dock = DockStyle.Fill, AutoScroll = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(4) };
-    private readonly TextBox _finalFreeText = new() { Multiline = true, Width = 800, Height = 82, ScrollBars = ScrollBars.Vertical, PlaceholderText = "可空；这里完全自由表达，权重最高" };
-    private readonly RichTextBox _factStatus = new() { Dock = DockStyle.Fill, ReadOnly = true, WordWrap = true, Font = new Font("Microsoft YaHei UI", 9f), Text = "第一轮会在同一次 API 调用里：强制读取指定豆瓣链接 → 必要时补充搜索 → 输出事实定位 → 直接生成第一轮3个问题。" };
+    private readonly TextBox _finalFreeText = new() { Multiline = true, Width = 800, Height = 82, ScrollBars = ScrollBars.Vertical, PlaceholderText = "可空；第三轮同页自由题，完全自由表达，权重最高" };
+    private readonly RichTextBox _factStatus = new() { Dock = DockStyle.Fill, ReadOnly = true, WordWrap = true, Font = new Font("Microsoft YaHei UI", 9f), Text = "第一轮会在同一次 API 调用里：读取指定豆瓣链接 → 必要时一次精确搜索 → 建立事实与发散候选 → 直接生成第一轮3个问题。" };
     private readonly RichTextBox _finalReview = new() { Dock = DockStyle.Fill, ReadOnly = true, Font = new Font("Microsoft YaHei UI", 11f), Text = "三轮完成后在这里生成短评。" };
     private readonly RichTextBox _metrics = new() { Dock = DockStyle.Fill, ReadOnly = true, Font = new Font("Consolas", 9f) };
     private readonly ComboBox _callSelector = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
@@ -76,7 +76,7 @@ public sealed partial class MainForm : Form
         _interviewEngine = new InterviewEngine(_client, _responsesClient);
         _reviewEngine = new ReviewEngine(_client);
 
-        Text = "AI 观影短评实验台 v0.1-preview.3｜豆瓣事实定位 · 多模型 · 三轮采访";
+        Text = "AI 观影短评实验台 v0.1-preview.6｜受控发散 · 三轮九题 · 同页收尾";
         Width = 1580;
         Height = 980;
         MinimumSize = new Size(1180, 760);
@@ -124,7 +124,7 @@ public sealed partial class MainForm : Form
         status.Controls.Add(_entityStatus);
         left.Controls.Add(status, 0, 1);
 
-        var qGroup = new GroupBox { Text = "当前采访轮次｜每题 A/B/C 可多选；程序固定提供 D.都不符合 + 自由补充", Dock = DockStyle.Fill, Padding = new Padding(8) };
+        var qGroup = new GroupBox { Text = "当前采访轮次｜普通题保持精准；第二轮发散题提供更多维度；全部可多选 + 都不符合 + 自由补充", Dock = DockStyle.Fill, Padding = new Padding(8) };
         qGroup.Controls.Add(_questions);
         left.Controls.Add(qGroup, 0, 2);
 
