@@ -129,6 +129,10 @@ internal sealed class TrayContext : ApplicationContext
     private volatile bool voiceAltDown = false;
     private volatile int voiceSendDelayMs = 800;
     private int voiceSequence = 0;
+    private int voiceAttempt = 0;
+    private int activeVoiceAttempt = 0;
+    private long voiceHeldStartedTimestamp = 0;
+    private readonly object voiceLogLock = new object();
 
     private System.Threading.Timer repeatTimer;
 
@@ -445,10 +449,20 @@ internal sealed class TrayContext : ApplicationContext
             {
                 if (isDown)
                 {
+                    if (!voiceAltDown)
+                    {
+                        activeVoiceAttempt = Interlocked.Increment(ref voiceAttempt);
+                        LogVoice(activeVoiceAttempt, "ALT_DOWN");
+                    }
                     voiceAltDown = true;
                 }
                 else if (isUp)
                 {
+                    bool heldAtRelease = voiceHeld;
+                    long durationMs = -1;
+                    if (heldAtRelease && voiceHeldStartedTimestamp > 0)
+                        durationMs = (long)((Stopwatch.GetTimestamp() - voiceHeldStartedTimestamp) * 1000.0 / Stopwatch.Frequency);
+                    LogVoice(activeVoiceAttempt, "ALT_UP held=" + (heldAtRelease ? "1" : "0") + " duration=" + durationMs + "ms keepDraft=" + (voiceKeepDraft ? "1" : "0"));
                     voiceAltDown = false;
 
                     // Alt+0 的 Alt Up 就是 Options+ 实体语音键真正松开的时刻。
@@ -456,11 +470,13 @@ internal sealed class TrayContext : ApplicationContext
                     if (voiceHeld)
                     {
                         bool keepDraft = voiceKeepDraft;
+                        int attempt = activeVoiceAttempt;
                         voiceHeld = false;
                         voiceKeepDraft = false;
+                        voiceHeldStartedTimestamp = 0;
 
                         int sequence = Interlocked.Increment(ref voiceSequence);
-                        BeginFinishVoiceSession(sequence, keepDraft);
+                        BeginFinishVoiceSession(sequence, keepDraft, attempt);
                     }
                 }
 
@@ -474,10 +490,15 @@ internal sealed class TrayContext : ApplicationContext
             // 正常情况下 Options+/微信输入法会把“0”变成诊断中观察到的 VK_NONAME 标记；
             // 同时保留标准 VK_0 作为兼容兜底。这里只识别，不拦截，让微信原生逻辑完整运行。
             bool isVoiceTrigger = isWeTypeMarker || data.vkCode == VK_0;
+            if (isDown && isVoiceTrigger)
+                LogVoice(activeVoiceAttempt, "TRIGGER vk=0x" + data.vkCode.ToString("X2") + " extra=0x" + data.dwExtraInfo.ToInt64().ToString("X") + " alt=" + (voiceAltDown ? "1" : "0"));
+
             if (!voiceHeld && isDown && voiceAltDown && isVoiceTrigger)
             {
                 Interlocked.Increment(ref voiceSequence);
                 voiceHeld = true;
+                voiceHeldStartedTimestamp = Stopwatch.GetTimestamp();
+                LogVoice(activeVoiceAttempt, "VOICE_HELD");
                 voiceKeepDraft = false;
                 middleButtonCaptured = false;
                 UpdateVoiceStatus("语音：按住说话中");
@@ -493,8 +514,11 @@ internal sealed class TrayContext : ApplicationContext
         return vkCode == VK_MENU || vkCode == VK_LMENU || vkCode == VK_RMENU;
     }
 
-    private void BeginFinishVoiceSession(int sequence, bool keepDraft)
+    private void BeginFinishVoiceSession(int sequence, bool keepDraft, int attempt)
     {
+        if (!keepDraft)
+            LogVoice(attempt, "SEND_QUEUED seq=" + sequence + " delay=" + voiceSendDelayMs + "ms");
+
         UpdateVoiceStatus(keepDraft ? "语音：已松开，保留文字" : "语音：已松开，等待自动发送");
 
         ThreadPool.QueueUserWorkItem(delegate
@@ -510,10 +534,13 @@ internal sealed class TrayContext : ApplicationContext
             // 只等一次排版/落字延迟，然后发一个 Enter 发送消息。
             Thread.Sleep(voiceSendDelayMs);
 
+            LogVoice(attempt, "SEND_CHECK seq=" + sequence + " current=" + Volatile.Read(ref voiceSequence) + " enabled=" + (voiceEnabled ? "1" : "0"));
+
             if (sequence != Volatile.Read(ref voiceSequence) || !voiceEnabled)
                 return;
 
             SendEnter();
+            LogVoice(attempt, "ENTER_SENT");
             TryHaptic();
             UpdateVoiceStatus("语音：已发送，待机");
         });
@@ -526,6 +553,21 @@ internal sealed class TrayContext : ApplicationContext
         voiceKeepDraft = false;
         middleButtonCaptured = false;
         voiceAltDown = false;
+    }
+
+    private void LogVoice(int attempt, string message)
+    {
+        try
+        {
+            lock (voiceLogLock)
+            {
+                string logPath = System.IO.Path.Combine(Application.StartupPath, "voice.log");
+                System.IO.File.AppendAllText(logPath, DateTime.Now.ToString("HH:mm:ss.fff") + " attempt=" + attempt + " " + message + Environment.NewLine);
+            }
+        }
+        catch
+        {
+        }
     }
 
     private void UpdateVoiceStatus(string text)
