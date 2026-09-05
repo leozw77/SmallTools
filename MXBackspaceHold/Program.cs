@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Net;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -63,6 +64,9 @@ internal sealed class TrayContext : ApplicationContext
     private const string AppRegPath = @"Software\MXBackspaceHold";
     private const string RunRegPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValueName = "MXBackspaceHold";
+
+    // HapticWebPlugin：只使用一个轻微波形，作为语音开始/自动发送两个状态反馈。
+    private const string HapticEndpoint = "https://local.jmw.nz:41443/haptic/subtle_collision";
 
     // 标记本程序自己注入的按键，防止键盘 Hook 再次把它当成 MX 语音触发组合。
     private const long SyntheticExtraInfoValue = 0x4D584248; // "MXBH"
@@ -301,7 +305,7 @@ internal sealed class TrayContext : ApplicationContext
 
         trayIcon = new NotifyIcon();
         trayIcon.Icon = SystemIcons.Application;
-        trayIcon.Text = "MXBackspaceHold v1.4.2";
+        trayIcon.Text = "MXBackspaceHold v1.4.3";
         trayIcon.ContextMenuStrip = menu;
         trayIcon.Visible = true;
         trayIcon.DoubleClick += delegate
@@ -320,8 +324,8 @@ internal sealed class TrayContext : ApplicationContext
 
         trayIcon.ShowBalloonTip(
             2200,
-            "MXBackspaceHold v1.4.2 已启动",
-            "连续退格保持原样；MX 语音键请映射为 Alt+0。微信原生处理按住/松开，本程序仅在松开后自动发送；中键可保留文字。",
+            "MXBackspaceHold v1.4.3 已启动",
+            "连续退格保持原样；MX 语音键请映射为 Alt+0。语音开始和自动发送各震一下 subtle_collision；中键保留文字时不会触发发送震动。",
             ToolTipIcon.Info);
     }
 
@@ -477,6 +481,7 @@ internal sealed class TrayContext : ApplicationContext
                 voiceKeepDraft = false;
                 middleButtonCaptured = false;
                 UpdateVoiceStatus("语音：按住说话中");
+                TryHaptic();
             }
         }
 
@@ -509,6 +514,7 @@ internal sealed class TrayContext : ApplicationContext
                 return;
 
             SendEnter();
+            TryHaptic();
             UpdateVoiceStatus("语音：已发送，待机");
         });
     }
@@ -599,6 +605,35 @@ internal sealed class TrayContext : ApplicationContext
     {
         keybd_event(VK_RETURN, 0, 0, SyntheticExtraInfo);
         keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, SyntheticExtraInfo);
+    }
+
+    private static void TryHaptic()
+    {
+        // 震动是纯旁路反馈：永远不在 Hook/发送线程里等待网络。
+        // 插件未启动、鼠标未连接或请求失败时直接忽略，不影响语音和连续退格。
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+            try
+            {
+                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072; // TLS 1.2
+
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(HapticEndpoint);
+                request.Method = "POST";
+                request.ContentLength = 0;
+                request.Timeout = 500;
+                request.ReadWriteTimeout = 500;
+                request.KeepAlive = false;
+
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                {
+                    // 收到响应即可；不读取/保存日志，避免额外状态和长期内存占用。
+                }
+            }
+            catch
+            {
+                // 触觉反馈失败绝不能影响核心功能。
+            }
+        });
     }
 
     private void SetRepeatInterval(int intervalMs)

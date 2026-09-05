@@ -1,4 +1,4 @@
-﻿MXBackspaceHold v1.4.2 - MX Master 4 连续退格 + Alt+0 长按语音自动发送
+﻿MXBackspaceHold v1.4.3 - MX Master 4 连续退格 + Alt+0 长按语音自动发送
 
 【必须配置】
 1. Logi Options+：把语音实体键设为 Alt + 0（普通 Keyboard Shortcut，不要 Smart Action）。
@@ -46,3 +46,12 @@ v1.3 功能保持不变：
 - 开机自动启动
 
 如果松开后文字还没完全落完就发送，把延迟从 800 ms 调到 1000 或 1500 ms；如果感觉慢，可以试 500 ms。
+
+
+【v1.4.3 触觉反馈】
+- 需要本机 HapticWebPlugin 已正常运行。
+- 固定只使用 subtle_collision 一个波形。
+- 微信语音真正开始时震一下。
+- 自动发送 Enter 发出时再震一下。
+- 中键选择“保留草稿”时不会出现第二次发送震动。
+- 震动调用完全异步；插件不可用时静默忽略，不影响语音、发送和连续退格。
