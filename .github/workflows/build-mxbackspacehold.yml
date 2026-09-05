@@ -1,0 +1,45 @@
+name: Build MXBackspaceHold
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/mx-voice-ptt-v1.4-20260906
+    paths:
+      - 'MXBackspaceHold/**'
+      - '.github/workflows/build-mxbackspacehold.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile with Windows .NET Framework compiler
+        shell: cmd
+        run: |
+          if not exist "MXBackspaceHold\dist" mkdir "MXBackspaceHold\dist"
+          set "CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if not exist "%CSC%" set "CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+          "%CSC%" /nologo /target:winexe /optimize+ /platform:anycpu /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /out:"MXBackspaceHold\dist\MXBackspaceHold.exe" "MXBackspaceHold\Program.cs"
+
+      - name: Package v1.4
+        shell: pwsh
+        run: |
+          $package = "MXBackspaceHold/dist/MXBackspaceHold_Windows_v1.4"
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          Copy-Item "MXBackspaceHold/dist/MXBackspaceHold.exe" $package
+          Copy-Item "MXBackspaceHold/Program.cs" $package
+          Copy-Item "MXBackspaceHold/Build-and-Run.cmd" $package
+          Copy-Item "MXBackspaceHold/使用说明.txt" $package
+          Copy-Item "MXBackspaceHold/README.md" $package
+          Compress-Archive -Path "$package/*" -DestinationPath "MXBackspaceHold/dist/MXBackspaceHold_Windows_v1.4.zip" -Force
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: MXBackspaceHold_Windows_v1.4
+          path: MXBackspaceHold/dist/MXBackspaceHold_Windows_v1.4.zip
+          if-no-files-found: error
