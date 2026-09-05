@@ -20,10 +20,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Apply v1.4.1 Ctrl+Alt+0 migration
+      - name: Apply v1.4.2 Alt+0 migration
         shell: pwsh
         run: |
-          python "MXBackspaceHold/patch-v1.4.1-ctrl-alt-0.py"
+          python "MXBackspaceHold/patch-v1.4.2-alt-0.py"
 
       - name: Commit migrated source when needed
         shell: pwsh
@@ -35,7 +35,7 @@ jobs:
             if (git diff --cached --quiet) {
               Write-Host "No source migration changes to commit."
             } else {
-              git commit -m "feat: use Ctrl+Alt+0 for MX voice PTT"
+              git commit -m "feat: use Alt+0 native PTT lifecycle"
               git push
             }
           }
@@ -48,21 +48,21 @@ jobs:
           if not exist "%CSC%" set "CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
           "%CSC%" /nologo /target:winexe /optimize+ /platform:anycpu /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /out:"MXBackspaceHold\dist\MXBackspaceHold.exe" "MXBackspaceHold\Program.cs"
 
-      - name: Package v1.4.1
+      - name: Package v1.4.2
         shell: pwsh
         run: |
-          $package = "MXBackspaceHold/dist/MXBackspaceHold_Windows_v1.4.1"
+          $package = "MXBackspaceHold/dist/MXBackspaceHold_Windows_v1.4.2"
           New-Item -ItemType Directory -Force -Path $package | Out-Null
           Copy-Item "MXBackspaceHold/dist/MXBackspaceHold.exe" $package
           Copy-Item "MXBackspaceHold/Program.cs" $package
           Copy-Item "MXBackspaceHold/Build-and-Run.cmd" $package
           Copy-Item "MXBackspaceHold/使用说明.txt" $package
           Copy-Item "MXBackspaceHold/README.md" $package
-          Compress-Archive -Path "$package/*" -DestinationPath "MXBackspaceHold/dist/MXBackspaceHold_Windows_v1.4.1.zip" -Force
+          Compress-Archive -Path "$package/*" -DestinationPath "MXBackspaceHold/dist/MXBackspaceHold_Windows_v1.4.2.zip" -Force
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: MXBackspaceHold_Windows_v1.4.1
-          path: MXBackspaceHold/dist/MXBackspaceHold_Windows_v1.4.1.zip
+          name: MXBackspaceHold_Windows_v1.4.2
+          path: MXBackspaceHold/dist/MXBackspaceHold_Windows_v1.4.2.zip
           if-no-files-found: error
