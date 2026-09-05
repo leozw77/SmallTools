@@ -52,6 +52,7 @@ internal sealed class TrayContext : ApplicationContext
     private const byte VK_RCONTROL  = 0xA3;
     private const byte VK_LMENU     = 0xA4;
     private const byte VK_RMENU     = 0xA5;
+    private const byte VK_NONAME   = 0xFC;
 
     private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     private const uint KEYEVENTF_KEYUP       = 0x0002;
@@ -65,6 +66,7 @@ internal sealed class TrayContext : ApplicationContext
 
     // 标记本程序自己注入的按键，防止键盘 Hook 再次把它当成 MX 语音触发组合。
     private const long SyntheticExtraInfoValue = 0x4D584248; // "MXBH"
+    private const long WeTypeExtraInfoValue = 0x57545950;    // observed WeType marker
     private static readonly UIntPtr SyntheticExtraInfo = new UIntPtr((uint)SyntheticExtraInfoValue);
 
     private readonly NotifyIcon trayIcon;
@@ -111,18 +113,16 @@ internal sealed class TrayContext : ApplicationContext
     private volatile int repeatIntervalOverride = 0;
     private volatile int repeatDelayOverride = 0;
 
-    // 语音功能：MX Master 4 的目标实体键在 Options+ 里映射为 Ctrl+Alt+0。
-    // 这个组合只作为“鼠标语音键”的身份证：检测到后立即把系统里的 Ctrl/Alt 释放，
-    // 再补发一次极短的 Ctrl+Alt+0 来启动微信长语音。这样手指继续按住鼠标时，
-    // Windows 不会一直处于 Ctrl/Alt 按下状态，滚轮和点击仍保持普通行为。
+    // 语音功能：MX Master 4 的目标实体键在 Options+ 里映射为 Alt+0。
+    // 微信输入法自己处理 Alt+0 的按住/松开；本程序只旁观，不拦截、不重放快捷键。
+    // 诊断日志显示：Alt 在实体键按住期间保持 Down；微信输入法同时产生
+    // VK_NONAME(0xFC) / extraInfo=0x57545950 标记。看到该标记后进入语音状态，
+    // 真正收到 Alt Up 时就等价于“鼠标语音键已松开”。
     private volatile bool voiceEnabled = true;
     private volatile bool voiceHeld = false;
     private volatile bool voiceKeepDraft = false;
     private volatile bool middleButtonCaptured = false;
-    private volatile bool voiceCtrlDown = false;
     private volatile bool voiceAltDown = false;
-    private volatile bool voiceZeroDown = false;
-    private volatile bool voiceChordCaptured = false;
     private volatile int voiceSendDelayMs = 800;
     private int voiceSequence = 0;
 
@@ -153,7 +153,7 @@ internal sealed class TrayContext : ApplicationContext
             UnhookWindowsHookEx(mouseHookHandle);
             mouseHookHandle = IntPtr.Zero;
             MessageBox.Show(
-                "无法安装键盘监听。\r\n\r\nCtrl+Alt+0 语音功能无法工作。请退出后重新运行；如果目标程序以管理员身份运行，也可以尝试以管理员身份运行本程序。",
+                "无法安装键盘监听。\r\n\r\nAlt+0 语音功能无法工作。请退出后重新运行；如果目标程序以管理员身份运行，也可以尝试以管理员身份运行本程序。",
                 "MXBackspaceHold",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
@@ -234,7 +234,7 @@ internal sealed class TrayContext : ApplicationContext
         delayMenu.DropDownItems.Add(delay300Item);
         delayMenu.DropDownItems.Add(delay250Item);
 
-        voiceEnabledItem = new ToolStripMenuItem("启用 Ctrl+Alt+0 长按语音发送");
+        voiceEnabledItem = new ToolStripMenuItem("启用 Alt+0 长按语音自动发送");
         voiceEnabledItem.Checked = voiceEnabled;
         voiceEnabledItem.CheckOnClick = true;
         voiceEnabledItem.Click += delegate
@@ -301,7 +301,7 @@ internal sealed class TrayContext : ApplicationContext
 
         trayIcon = new NotifyIcon();
         trayIcon.Icon = SystemIcons.Application;
-        trayIcon.Text = "MXBackspaceHold v1.4.1";
+        trayIcon.Text = "MXBackspaceHold v1.4.2";
         trayIcon.ContextMenuStrip = menu;
         trayIcon.Visible = true;
         trayIcon.DoubleClick += delegate
@@ -320,8 +320,8 @@ internal sealed class TrayContext : ApplicationContext
 
         trayIcon.ShowBalloonTip(
             2200,
-            "MXBackspaceHold v1.4.1 已启动",
-            "连续退格保持原样；MX 语音键请映射为 Ctrl+Alt+0。按住说话，松开自动结束并发送；按住期间点一下滚轮中键可保留文字不发送。",
+            "MXBackspaceHold v1.4.2 已启动",
+            "连续退格保持原样；MX 语音键请映射为 Alt+0。微信原生处理按住/松开，本程序仅在松开后自动发送；中键可保留文字。",
             ToolTipIcon.Info);
     }
 
@@ -429,77 +429,58 @@ internal sealed class TrayContext : ApplicationContext
             KBDLLHOOKSTRUCT data = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(
                 lParam, typeof(KBDLLHOOKSTRUCT));
 
-            // 本程序自己补发的按键必须放行，否则会被自己的 Hook 再次吞掉。
+            // 本程序自己补发的 Enter 只放行，不参与语音状态判断。
             if (data.dwExtraInfo.ToInt64() == SyntheticExtraInfoValue)
                 return CallNextHookEx(keyboardHookHandle, nCode, wParam, lParam);
 
             bool isDown = wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN;
             bool isUp = wParam == (IntPtr)WM_KEYUP || wParam == (IntPtr)WM_SYSKEYUP;
-            bool isCtrl = IsCtrlKey(data.vkCode);
             bool isAlt = IsAltKey(data.vkCode);
-            bool isZero = data.vkCode == VK_0;
 
-            // 先记录实体组合键状态。合成事件在上面已经放行，不会污染这里的状态。
-            if (isCtrl)
+            if (isAlt)
             {
-                if (isDown) voiceCtrlDown = true;
-                if (isUp) voiceCtrlDown = false;
-            }
-            else if (isAlt)
-            {
-                if (isDown) voiceAltDown = true;
-                if (isUp) voiceAltDown = false;
-            }
-            else if (isZero)
-            {
-                if (isDown) voiceZeroDown = true;
-                if (isUp) voiceZeroDown = false;
+                if (isDown)
+                {
+                    voiceAltDown = true;
+                }
+                else if (isUp)
+                {
+                    voiceAltDown = false;
+
+                    // Alt+0 的 Alt Up 就是 Options+ 实体语音键真正松开的时刻。
+                    // 不吞这个 Up：先让微信输入法原生结束语音，再由我们延迟一次 Enter 发送。
+                    if (voiceHeld)
+                    {
+                        bool keepDraft = voiceKeepDraft;
+                        voiceHeld = false;
+                        voiceKeepDraft = false;
+
+                        int sequence = Interlocked.Increment(ref voiceSequence);
+                        BeginFinishVoiceSession(sequence, keepDraft);
+                    }
+                }
+
+                return CallNextHookEx(keyboardHookHandle, nCode, wParam, lParam);
             }
 
-            // Ctrl 和 Alt 的最初 KeyDown 会先正常到达系统；直到 0 Down 出现，
-            // 我们才知道这是专用的 Ctrl+Alt+0 语音组合，而不是用户正常使用 Ctrl/Alt。
-            if (!voiceChordCaptured && isDown && isZero && voiceCtrlDown && voiceAltDown)
+            bool isWeTypeMarker =
+                data.vkCode == VK_NONAME &&
+                data.dwExtraInfo.ToInt64() == WeTypeExtraInfoValue;
+
+            // 正常情况下 Options+/微信输入法会把“0”变成诊断中观察到的 VK_NONAME 标记；
+            // 同时保留标准 VK_0 作为兼容兜底。这里只识别，不拦截，让微信原生逻辑完整运行。
+            bool isVoiceTrigger = isWeTypeMarker || data.vkCode == VK_0;
+            if (!voiceHeld && isDown && voiceAltDown && isVoiceTrigger)
             {
                 Interlocked.Increment(ref voiceSequence);
                 voiceHeld = true;
                 voiceKeepDraft = false;
                 middleButtonCaptured = false;
-                voiceChordCaptured = true;
-
                 UpdateVoiceStatus("语音：按住说话中");
-
-                // 吞掉实体 0 Down，并立即把刚刚进入系统的 Ctrl/Alt 中和掉；
-                // 然后补发一次极短的 Ctrl+Alt+0 点按来启动微信长语音。
-                // 之后即使 MX 侧键仍持续按住，系统也没有 Ctrl/Alt 修饰状态，滚轮可正常滚动。
-                SendCtrlAlt0TapAndNeutralize();
-                return (IntPtr)1;
-            }
-
-            if (voiceChordCaptured && (isCtrl || isAlt || isZero))
-            {
-                // 组合已经被本程序接管后，后续重复 Down/Up 都不再交给前台程序。
-                // 等实体 Ctrl、Alt、0 全部真正松开，才视为“鼠标语音键已松开”。
-                if (isUp && !voiceCtrlDown && !voiceAltDown && !voiceZeroDown)
-                {
-                    bool keepDraft = voiceKeepDraft;
-                    voiceHeld = false;
-                    voiceKeepDraft = false;
-                    voiceChordCaptured = false;
-
-                    int sequence = Interlocked.Increment(ref voiceSequence);
-                    BeginFinishVoiceSession(sequence, keepDraft);
-                }
-
-                return (IntPtr)1;
             }
         }
 
         return CallNextHookEx(keyboardHookHandle, nCode, wParam, lParam);
-    }
-
-    private static bool IsCtrlKey(uint vkCode)
-    {
-        return vkCode == VK_CONTROL || vkCode == VK_LCONTROL || vkCode == VK_RCONTROL;
     }
 
     private static bool IsAltKey(uint vkCode)
@@ -509,32 +490,24 @@ internal sealed class TrayContext : ApplicationContext
 
     private void BeginFinishVoiceSession(int sequence, bool keepDraft)
     {
-        UpdateVoiceStatus(keepDraft ? "语音：结束后保留文字" : "语音：结束并等待自动发送");
+        UpdateVoiceStatus(keepDraft ? "语音：已松开，保留文字" : "语音：已松开，等待自动发送");
 
         ThreadPool.QueueUserWorkItem(delegate
         {
-            // 这里的 35 ms 不是“等微信排版”，只是把结束动作放到实体键松开回调之后再执行。
-            Thread.Sleep(35);
-
-            if (sequence != Volatile.Read(ref voiceSequence) || !voiceEnabled)
-                return;
-
-            // 第一个 Enter：结束微信长语音并让它完成最后的转写/排版。
-            SendEnter();
-
+            // Alt Up 已经被原样放给微信输入法，因此微信会自己结束长语音并做最后转写。
+            // 保留草稿时不需要再发任何 Enter。
             if (keepDraft)
             {
                 UpdateVoiceStatus("语音：已保留文字，待机");
                 return;
             }
 
-            // 不监控微信、不监控输入框。只使用一个可调的简单延迟。
+            // 只等一次排版/落字延迟，然后发一个 Enter 发送消息。
             Thread.Sleep(voiceSendDelayMs);
 
             if (sequence != Volatile.Read(ref voiceSequence) || !voiceEnabled)
                 return;
 
-            // 第二个 Enter：发送当前输入框内容。
             SendEnter();
             UpdateVoiceStatus("语音：已发送，待机");
         });
@@ -546,10 +519,7 @@ internal sealed class TrayContext : ApplicationContext
         voiceHeld = false;
         voiceKeepDraft = false;
         middleButtonCaptured = false;
-        voiceCtrlDown = false;
         voiceAltDown = false;
-        voiceZeroDown = false;
-        voiceChordCaptured = false;
     }
 
     private void UpdateVoiceStatus(string text)
@@ -629,25 +599,6 @@ internal sealed class TrayContext : ApplicationContext
     {
         keybd_event(VK_RETURN, 0, 0, SyntheticExtraInfo);
         keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, SyntheticExtraInfo);
-    }
-
-    private static void SendCtrlAlt0TapAndNeutralize()
-    {
-        // 先释放可能已经送进系统的实体修饰键状态。左右两侧都发 Up，避免 Options+
-        // 对 Ctrl / Alt 的左右实现差异影响滚轮或点击。多余的 KeyUp 对系统无害。
-        keybd_event(VK_LCONTROL, 0, KEYEVENTF_KEYUP, SyntheticExtraInfo);
-        keybd_event(VK_RCONTROL, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, SyntheticExtraInfo);
-        keybd_event(VK_LMENU, 0, KEYEVENTF_KEYUP, SyntheticExtraInfo);
-        keybd_event(VK_RMENU, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, SyntheticExtraInfo);
-
-        // 再用固定的左 Ctrl + 左 Alt + 0 补发一个极短快捷键点按。微信只需要收到一次
-        // Ctrl+Alt+0 来进入长语音模式，不需要在整段讲话期间保持修饰键按下。
-        keybd_event(VK_LCONTROL, 0, 0, SyntheticExtraInfo);
-        keybd_event(VK_LMENU, 0, 0, SyntheticExtraInfo);
-        keybd_event(VK_0, 0, 0, SyntheticExtraInfo);
-        keybd_event(VK_0, 0, KEYEVENTF_KEYUP, SyntheticExtraInfo);
-        keybd_event(VK_LMENU, 0, KEYEVENTF_KEYUP, SyntheticExtraInfo);
-        keybd_event(VK_LCONTROL, 0, KEYEVENTF_KEYUP, SyntheticExtraInfo);
     }
 
     private void SetRepeatInterval(int intervalMs)
