@@ -1,0 +1,55 @@
+name: Build MXHapticTest
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/mx-voice-ptt-v1.4-20260906
+    paths:
+      - 'MXHapticTest/**'
+      - '.github/workflows/build-mxhaptictest.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile tester
+        shell: cmd
+        run: |
+          if not exist "MXHapticTest\dist" mkdir "MXHapticTest\dist"
+          set "CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if not exist "%CSC%" set "CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+          "%CSC%" /nologo /target:winexe /optimize+ /platform:anycpu /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /out:"MXHapticTest\dist\MXHapticTest.exe" "MXHapticTest\Program.cs"
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $package = "MXHapticTest/dist/MXHapticTest_Windows_v0.1"
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          Copy-Item "MXHapticTest/dist/MXHapticTest.exe" $package
+          Copy-Item "MXHapticTest/Program.cs" $package
+          @"
+          MXHapticTest v0.1
+
+          用途：测试 HapticWebPlugin 是否能被普通 Windows EXE 通过本机 REST API 触发。
+
+          使用：
+          1. 确认 Logi Options+ 中 HapticWebPlugin 状态正常。
+          2. 双击 MXHapticTest.exe。
+          3. 选择 waveform，点击“震一下”。
+          4. 如果显示 HTTP 200 且鼠标震动，则说明可直接集成进 MXBackspaceHold。
+
+          本程序只向 https://local.jmw.nz:41443/haptic/{waveform} 发送 POST，失败不会修改任何鼠标设置。
+          "@ | Set-Content -Encoding UTF8 "$package/使用说明.txt"
+          Compress-Archive -Path "$package/*" -DestinationPath "MXHapticTest/dist/MXHapticTest_Windows_v0.1.zip" -Force
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: MXHapticTest_Windows_v0.1
+          path: MXHapticTest/dist/MXHapticTest_Windows_v0.1.zip
+          if-no-files-found: error
