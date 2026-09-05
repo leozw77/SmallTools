@@ -1,0 +1,43 @@
+name: Build MXKeyboardDiag
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/mx-voice-ptt-v1.4-20260906
+    paths:
+      - 'MXKeyboardDiag/**'
+      - '.github/workflows/build-mxkeyboarddiag.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile diagnostic tool
+        shell: cmd
+        run: |
+          if not exist "MXKeyboardDiag\dist" mkdir "MXKeyboardDiag\dist"
+          set "CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if not exist "%CSC%" set "CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+          "%CSC%" /nologo /target:winexe /optimize+ /platform:anycpu /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /out:"MXKeyboardDiag\dist\MXKeyboardDiag.exe" "MXKeyboardDiag\Program.cs"
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $package = "MXKeyboardDiag/dist/MXKeyboardDiag_Windows_v0.1"
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          Copy-Item "MXKeyboardDiag/dist/MXKeyboardDiag.exe" $package
+          Copy-Item "MXKeyboardDiag/Program.cs" $package
+          Copy-Item "MXKeyboardDiag/README.md" $package
+          Compress-Archive -Path "$package/*" -DestinationPath "MXKeyboardDiag/dist/MXKeyboardDiag_Windows_v0.1.zip" -Force
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: MXKeyboardDiag_Windows_v0.1
+          path: MXKeyboardDiag/dist/MXKeyboardDiag_Windows_v0.1.zip
+          if-no-files-found: error
