@@ -18,12 +18,38 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Compile UIA probe
-        shell: cmd
+        shell: pwsh
         run: |
-          if not exist "UIAReadProbe\dist" mkdir "UIAReadProbe\dist"
-          set "CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          if not exist "%CSC%" set "CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
-          "%CSC%" /nologo /target:winexe /optimize+ /platform:anycpu /r:System.dll /r:System.Core.dll /r:System.Windows.Forms.dll /r:WindowsBase.dll /r:UIAutomationClient.dll /r:UIAutomationTypes.dll /out:"UIAReadProbe\dist\UIAReadProbe.exe" "UIAReadProbe\Program.cs"
+          New-Item -ItemType Directory -Force -Path "UIAReadProbe/dist" | Out-Null
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) { $csc = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe" }
+
+          function Find-Assembly([string]$name) {
+            $roots = @(
+              "${env:ProgramFiles(x86)}\Reference Assemblies\Microsoft\Framework",
+              "$env:WINDIR\Microsoft.NET\assembly\GAC_MSIL"
+            )
+            foreach ($root in $roots) {
+              if (Test-Path $root) {
+                $match = Get-ChildItem -Path $root -Filter $name -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($match) { return $match.FullName }
+              }
+            }
+            throw "Assembly not found: $name"
+          }
+
+          $windowsBase = Find-Assembly "WindowsBase.dll"
+          $uiaClient = Find-Assembly "UIAutomationClient.dll"
+          $uiaTypes = Find-Assembly "UIAutomationTypes.dll"
+          Write-Host "WindowsBase=$windowsBase"
+          Write-Host "UIAutomationClient=$uiaClient"
+          Write-Host "UIAutomationTypes=$uiaTypes"
+
+          & $csc /nologo /target:winexe /optimize+ /platform:anycpu `
+            /r:System.dll /r:System.Core.dll /r:System.Windows.Forms.dll `
+            "/r:$windowsBase" "/r:$uiaClient" "/r:$uiaTypes" `
+            "/out:UIAReadProbe\dist\UIAReadProbe.exe" "UIAReadProbe\Program.cs"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Package
         shell: pwsh
