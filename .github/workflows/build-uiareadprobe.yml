@@ -67,15 +67,15 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $package = "UIAReadProbe/dist/UIAReadProbe_Windows_v0.2"
+          $package = "UIAReadProbe/dist/UIAReadProbe_Windows_v0.3"
           New-Item -ItemType Directory -Force -Path $package | Out-Null
           Copy-Item "UIAReadProbe/dist/UIAReadProbe.exe" $package
           Copy-Item "UIAReadProbe/Program.cs" $package
-          Compress-Archive -Path "$package/*" -DestinationPath "UIAReadProbe/dist/UIAReadProbe_Windows_v0.2.zip" -Force
+          Compress-Archive -Path "$package/*" -DestinationPath "UIAReadProbe/dist/UIAReadProbe_Windows_v0.3.zip" -Force
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: UIAReadProbe_Windows_v0.2
-          path: UIAReadProbe/dist/UIAReadProbe_Windows_v0.2.zip
+          name: UIAReadProbe_Windows_v0.3
+          path: UIAReadProbe/dist/UIAReadProbe_Windows_v0.3.zip
           if-no-files-found: error
