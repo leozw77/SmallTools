@@ -20,6 +20,8 @@ echo Building MXBackspaceHold.exe...
  /r:System.Core.dll ^
  /r:System.Drawing.dll ^
  /r:System.Windows.Forms.dll ^
+ /r:"%WINDIR%\Microsoft.NET\assembly\GAC_MSIL\UIAutomationTypes\v4.0_4.0.0.0__31bf3856ad364e35\UIAutomationTypes.dll" ^
+ /r:"%WINDIR%\Microsoft.NET\assembly\GAC_MSIL\UIAutomationClient\v4.0_4.0.0.0__31bf3856ad364e35\UIAutomationClient.dll" ^
  /out:"%~dp0MXBackspaceHold.exe" "%~dp0Program.cs"
 
 if errorlevel 1 (
