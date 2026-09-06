@@ -23,7 +23,6 @@ internal sealed class ProbeContext : ApplicationContext
 
     private const uint ModAlt = 0x0001;
     private const uint ModControl = 0x0002;
-
     private const uint Vk9 = 0x39;
 
     private readonly ProbeWindow window;
@@ -40,7 +39,7 @@ internal sealed class ProbeContext : ApplicationContext
             File.WriteAllText(
                 logPath,
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff")
-                + " START UIAReadProbe v0.2 hotkey=Ctrl+Alt+9\r\n",
+                + " START UIAReadProbe v0.3 diagnostic hotkey=Ctrl+Alt+9\r\n",
                 new UTF8Encoding(true));
         }
         catch
@@ -94,7 +93,6 @@ internal sealed class ProbeContext : ApplicationContext
         }
 
         window.Dispose();
-
         base.ExitThreadCore();
     }
 
@@ -113,6 +111,7 @@ internal sealed class ProbeContext : ApplicationContext
     private sealed class ProbeWindow : NativeWindow, IDisposable
     {
         private const int WmHotkey = 0x0312;
+        private const int MaxLoggedTextLength = 200;
 
         private readonly string logPath;
         private readonly int hotkeyId;
@@ -153,25 +152,20 @@ internal sealed class ProbeContext : ApplicationContext
                     return;
                 }
 
-                string name =
-                    Safe(delegate
-                    {
-                        return element.Current.Name;
-                    });
+                string name = Safe(delegate
+                {
+                    return element.Current.Name;
+                });
 
-                string className =
-                    Safe(delegate
-                    {
-                        return element.Current.ClassName;
-                    });
+                string className = Safe(delegate
+                {
+                    return element.Current.ClassName;
+                });
 
-                string controlType =
-                    Safe(delegate
-                    {
-                        return element.Current
-                            .ControlType
-                            .ProgrammaticName;
-                    });
+                string controlType = Safe(delegate
+                {
+                    return element.Current.ControlType.ProgrammaticName;
+                });
 
                 int pid = 0;
                 bool isPassword = false;
@@ -208,17 +202,16 @@ internal sealed class ProbeContext : ApplicationContext
                 {
                 }
 
-                string windowTitle =
-                    GetForegroundWindowTitle();
+                string windowTitle = GetForegroundWindowTitle();
 
                 Log(
                     "FOCUSED"
-                    + " process=" + Escape(processName)
+                    + " process=" + EscapeAndTruncate(processName)
                     + " pid=" + pid
-                    + " window=\"" + Escape(windowTitle) + "\""
-                    + " type=" + Escape(controlType)
-                    + " class=" + Escape(className)
-                    + " name=\"" + Escape(name) + "\""
+                    + " window=\"" + EscapeAndTruncate(windowTitle) + "\""
+                    + " type=" + EscapeAndTruncate(controlType)
+                    + " class=" + EscapeAndTruncate(className)
+                    + " name=\"" + EscapeAndTruncate(name) + "\""
                     + " isPassword="
                     + (isPassword ? "1" : "0"));
 
@@ -228,83 +221,39 @@ internal sealed class ProbeContext : ApplicationContext
                     return;
                 }
 
-                bool valueSupported = false;
-                bool textSupported = false;
+                Log("ROOT_BEGIN");
+                AppendNodeDetails("ROOT", element);
 
-                object pattern;
-
-                // 先尝试 ValuePattern。
-                // 即使成功也不 return，继续尝试 TextPattern，
-                // 因为 ProseMirror 的 Value 可能只是占位/辅助文本。
                 try
                 {
-                    if (element.TryGetCurrentPattern(
-                        ValuePattern.Pattern,
-                        out pattern))
+                    AutomationElementCollection children =
+                        element.FindAll(
+                            TreeScope.Children,
+                            Condition.TrueCondition);
+
+                    Log(
+                        "DIRECT_CHILDREN count="
+                        + children.Count);
+
+                    for (int i = 0; i < children.Count; i++)
                     {
-                        valueSupported = true;
-
-                        string value =
-                            ((ValuePattern)pattern)
-                            .Current
-                            .Value ?? "";
-
-                        Log(
-                            "VALUE"
-                            + " len=" + value.Length
-                            + " text=\""
-                            + Escape(value)
-                            + "\"");
+                        AppendNodeDetails(
+                            "CHILD[" + i + "]",
+                            children[i]);
                     }
                 }
                 catch (Exception ex)
                 {
                     Log(
-                        "VALUE_ERROR "
+                        "DIRECT_CHILDREN_ERROR "
                         + ex.GetType().Name
                         + " "
-                        + Escape(ex.Message));
+                        + EscapeAndTruncate(ex.Message));
                 }
 
-                // 无论 ValuePattern 有没有结果，都继续尝试 TextPattern。
-                try
-                {
-                    if (element.TryGetCurrentPattern(
-                        TextPattern.Pattern,
-                        out pattern))
-                    {
-                        textSupported = true;
-
-                        TextPattern textPattern =
-                            (TextPattern)pattern;
-
-                        string text =
-                            textPattern
-                            .DocumentRange
-                            .GetText(-1) ?? "";
-
-                        Log(
-                            "TEXT"
-                            + " len=" + text.Length
-                            + " text=\""
-                            + Escape(text)
-                            + "\"");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log(
-                        "TEXT_ERROR "
-                        + ex.GetType().Name
-                        + " "
-                        + Escape(ex.Message));
-                }
-
-                if (!valueSupported && !textSupported)
-                {
-                    Log("NO_VALUE_OR_TEXT_PATTERN");
-                }
-
+                Log(
+                    "DIAGNOSTIC_SUMMARY root_and_direct_children_only");
+                Log("NO_TEXT_SELECTION_OR_SEND");
                 Log("READ_DONE");
             }
             catch (Exception ex)
@@ -313,8 +262,205 @@ internal sealed class ProbeContext : ApplicationContext
                     "READ_ERROR "
                     + ex.GetType().Name
                     + " "
-                    + Escape(ex.Message));
+                    + EscapeAndTruncate(ex.Message));
             }
+        }
+
+        private void AppendNodeDetails(
+            string label,
+            AutomationElement element)
+        {
+            try
+            {
+                if (element == null)
+                {
+                    Log(label + " ERROR=null_element");
+                    return;
+                }
+
+                string controlType = "";
+
+                try
+                {
+                    ControlType type = element.Current.ControlType;
+                    controlType =
+                        type.ProgrammaticName
+                        + " id="
+                        + type.Id;
+                }
+                catch (Exception ex)
+                {
+                    controlType =
+                        "error="
+                        + ex.GetType().Name;
+                }
+
+                string className = Safe(delegate
+                {
+                    return element.Current.ClassName;
+                });
+
+                string name = Safe(delegate
+                {
+                    return element.Current.Name;
+                });
+
+                Log(
+                    label
+                    + " ControlType="
+                    + EscapeAndTruncate(controlType));
+                Log(
+                    label
+                    + " ClassName=\""
+                    + EscapeAndTruncate(className)
+                    + "\"");
+                Log(
+                    label
+                    + " Name=\""
+                    + EscapeAndTruncate(name)
+                    + "\"");
+
+                LogValuePattern(label, element);
+                LogTextPattern(label, element);
+                LogLegacyIAccessible(label, element);
+            }
+            catch (Exception ex)
+            {
+                Log(
+                    label
+                    + " ERROR="
+                    + ex.GetType().Name
+                    + " "
+                    + EscapeAndTruncate(ex.Message));
+            }
+        }
+
+        private void LogValuePattern(
+            string label,
+            AutomationElement element)
+        {
+            try
+            {
+                object pattern;
+
+                if (!element.TryGetCurrentPattern(
+                    ValuePattern.Pattern,
+                    out pattern))
+                {
+                    Log(label + " ValuePattern=(unsupported)");
+                    return;
+                }
+
+                string value =
+                    ((ValuePattern)pattern).Current.Value
+                    ?? "";
+
+                Log(
+                    label
+                    + " ValuePattern "
+                    + FormatText(value));
+            }
+            catch (Exception ex)
+            {
+                Log(
+                    label
+                    + " ValuePattern_ERROR "
+                    + ex.GetType().Name
+                    + " "
+                    + EscapeAndTruncate(ex.Message));
+            }
+        }
+
+        private void LogTextPattern(
+            string label,
+            AutomationElement element)
+        {
+            try
+            {
+                object pattern;
+
+                if (!element.TryGetCurrentPattern(
+                    TextPattern.Pattern,
+                    out pattern))
+                {
+                    Log(label + " TextPattern=(unsupported)");
+                    return;
+                }
+
+                TextPattern textPattern =
+                    (TextPattern)pattern;
+
+                string text =
+                    textPattern.DocumentRange.GetText(-1)
+                    ?? "";
+
+                Log(
+                    label
+                    + " TextPattern "
+                    + FormatText(text));
+            }
+            catch (Exception ex)
+            {
+                Log(
+                    label
+                    + " TextPattern_ERROR "
+                    + ex.GetType().Name
+                    + " "
+                    + EscapeAndTruncate(ex.Message));
+            }
+        }
+
+        private void LogLegacyIAccessible(
+            string label,
+            AutomationElement element)
+        {
+            try
+            {
+                object pattern;
+
+                if (!element.TryGetCurrentPattern(
+                    LegacyIAccessiblePattern.Pattern,
+                    out pattern))
+                {
+                    Log(
+                        label
+                        + " LegacyIAccessible=(unsupported)");
+                    return;
+                }
+
+                string value =
+                    ((LegacyIAccessiblePattern)pattern)
+                    .Current
+                    .Value
+                    ?? "";
+
+                Log(
+                    label
+                    + " LegacyIAccessible "
+                    + FormatText(value));
+            }
+            catch (Exception ex)
+            {
+                Log(
+                    label
+                    + " LegacyIAccessible_ERROR "
+                    + ex.GetType().Name
+                    + " "
+                    + EscapeAndTruncate(ex.Message));
+            }
+        }
+
+        private string FormatText(string text)
+        {
+            if (String.IsNullOrEmpty(text))
+                return "len=0 text=\"\"";
+
+            return
+                "len="
+                + text.Length
+                + " text=\""
+                + EscapeAndTruncate(text)
+                + "\"";
         }
 
         private string GetForegroundWindowTitle()
@@ -354,16 +500,26 @@ internal sealed class ProbeContext : ApplicationContext
             }
         }
 
-        private string Escape(string text)
+        private string EscapeAndTruncate(string text)
         {
             if (text == null)
-                return "";
+                return "(null)";
 
-            return text
+            string escaped = text
                 .Replace("\\", "\\\\")
                 .Replace("\r", "\\r")
                 .Replace("\n", "\\n")
                 .Replace("\"", "\\\"");
+
+            if (escaped.Length > MaxLoggedTextLength)
+            {
+                return escaped.Substring(
+                    0,
+                    MaxLoggedTextLength)
+                    + "...";
+            }
+
+            return escaped;
         }
 
         private void Log(string message)
