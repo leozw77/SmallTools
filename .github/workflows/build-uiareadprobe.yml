@@ -2,12 +2,13 @@ name: Build UIAReadProbe
 
 on:
   workflow_dispatch:
+
   push:
     branches:
       - feature/mx-voice-ptt-v1.4-20260906
     paths:
-      - 'UIAReadProbe/**'
-      - '.github/workflows/build-uiareadprobe.yml'
+      - "UIAReadProbe/**"
+      - ".github/workflows/build-uiareadprobe.yml"
 
 jobs:
   build:
@@ -17,52 +18,64 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Compile UIA probe
+      - name: Locate UI Automation assemblies
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "UIAReadProbe/dist" | Out-Null
-          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          if (-not (Test-Path $csc)) { $csc = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe" }
+          $uiaClient = Get-ChildItem "$env:WINDIR\Microsoft.NET\assembly\GAC_MSIL\UIAutomationClient" -Recurse -Filter "UIAutomationClient.dll" | Select-Object -First 1 -ExpandProperty FullName
+          $uiaTypes = Get-ChildItem "$env:WINDIR\Microsoft.NET\assembly\GAC_MSIL\UIAutomationTypes" -Recurse -Filter "UIAutomationTypes.dll" | Select-Object -First 1 -ExpandProperty FullName
+          $windowsBase = Get-ChildItem "$env:WINDIR\Microsoft.NET\assembly\GAC_MSIL\WindowsBase" -Recurse -Filter "WindowsBase.dll" | Select-Object -First 1 -ExpandProperty FullName
 
-          function Find-Assembly([string]$name) {
-            $roots = @(
-              "${env:ProgramFiles(x86)}\Reference Assemblies\Microsoft\Framework",
-              "$env:WINDIR\Microsoft.NET\assembly\GAC_MSIL"
-            )
-            foreach ($root in $roots) {
-              if (Test-Path $root) {
-                $match = Get-ChildItem -Path $root -Filter $name -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-                if ($match) { return $match.FullName }
-              }
-            }
-            throw "Assembly not found: $name"
+          if (-not $uiaClient) {
+            throw "UIAutomationClient.dll not found"
           }
 
-          $windowsBase = Find-Assembly "WindowsBase.dll"
-          $uiaClient = Find-Assembly "UIAutomationClient.dll"
-          $uiaTypes = Find-Assembly "UIAutomationTypes.dll"
-          Write-Host "WindowsBase=$windowsBase"
-          Write-Host "UIAutomationClient=$uiaClient"
-          Write-Host "UIAutomationTypes=$uiaTypes"
+          if (-not $uiaTypes) {
+            throw "UIAutomationTypes.dll not found"
+          }
 
-          & $csc /nologo /target:winexe /optimize+ /platform:anycpu `
-            /r:System.dll /r:System.Core.dll /r:System.Windows.Forms.dll `
-            "/r:$windowsBase" "/r:$uiaClient" "/r:$uiaTypes" `
-            "/out:UIAReadProbe\dist\UIAReadProbe.exe" "UIAReadProbe\Program.cs"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not $windowsBase) {
+            throw "WindowsBase.dll not found"
+          }
+
+          "UIA_CLIENT=$uiaClient" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "UIA_TYPES=$uiaTypes" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WINDOWS_BASE=$windowsBase" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Compile UIA probe
+        shell: cmd
+        run: |
+          if not exist "UIAReadProbe\dist" mkdir "UIAReadProbe\dist"
+
+          set "CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+
+          if not exist "%CSC%" set "CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+
+          "%CSC%" ^
+            /nologo ^
+            /target:winexe ^
+            /optimize+ ^
+            /platform:anycpu ^
+            /r:System.dll ^
+            /r:System.Core.dll ^
+            /r:System.Windows.Forms.dll ^
+            /r:"%WINDOWS_BASE%" ^
+            /r:"%UIA_CLIENT%" ^
+            /r:"%UIA_TYPES%" ^
+            /out:"UIAReadProbe\dist\UIAReadProbe.exe" ^
+            "UIAReadProbe\Program.cs"
 
       - name: Package
         shell: pwsh
         run: |
-          $package = "UIAReadProbe/dist/UIAReadProbe_Windows_v0.1"
+          $package = "UIAReadProbe/dist/UIAReadProbe_Windows_v0.2"
           New-Item -ItemType Directory -Force -Path $package | Out-Null
           Copy-Item "UIAReadProbe/dist/UIAReadProbe.exe" $package
           Copy-Item "UIAReadProbe/Program.cs" $package
-          Compress-Archive -Path "$package/*" -DestinationPath "UIAReadProbe/dist/UIAReadProbe_Windows_v0.1.zip" -Force
+          Compress-Archive -Path "$package/*" -DestinationPath "UIAReadProbe/dist/UIAReadProbe_Windows_v0.2.zip" -Force
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: UIAReadProbe_Windows_v0.1
-          path: UIAReadProbe/dist/UIAReadProbe_Windows_v0.1.zip
+          name: UIAReadProbe_Windows_v0.2
+          path: UIAReadProbe/dist/UIAReadProbe_Windows_v0.2.zip
           if-no-files-found: error
