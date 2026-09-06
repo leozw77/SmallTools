@@ -6,6 +6,7 @@ using System.Net;
 using System.IO;
 using System.Text;
 using System.Threading;
+using System.Collections.Generic;
 using System.Windows.Forms;
 using Microsoft.Win32;
 using System.Windows.Automation;
@@ -34,6 +35,7 @@ internal static class Program
 
 internal sealed class TrayContext : ApplicationContext
 {
+    private const int WM_CLIPBOARDUPDATE = 0x031D;
     private const int WH_KEYBOARD_LL = 13;
     private const int WH_MOUSE_LL = 14;
 
@@ -147,10 +149,17 @@ internal sealed class TrayContext : ApplicationContext
     private int savedTargetPid = 0;
     private string savedTargetProcess = string.Empty;
     private string savedTargetTitle = string.Empty;
+    private string savedTargetClassName = string.Empty;
+    private string savedTargetAutomationId = string.Empty;
     private int observedVoiceAttempt = 0;
     private int observedTextChangedCount = 0;
     private bool observedTargetAttached = false;
     private bool observedSummaryWritten = false;
+
+    private readonly System.Windows.Forms.Timer clipboardRetryTimer;
+    private ClipboardListenerWindow clipboardListenerWindow;
+    private uint lastLoggedClipboardSequence;
+    private uint pendingClipboardSequence;
 
     private System.Threading.Timer repeatTimer;
 
@@ -158,6 +167,16 @@ internal sealed class TrayContext : ApplicationContext
     {
         LoadSettings();
         InitializeVoiceValidationLogs();
+
+        clipboardRetryTimer = new System.Windows.Forms.Timer();
+        clipboardRetryTimer.Interval = 120;
+        clipboardRetryTimer.Tick += delegate
+        {
+            clipboardRetryTimer.Stop();
+            TryCaptureClipboard("RETRY");
+        };
+        lastLoggedClipboardSequence = GetClipboardSequenceNumber();
+        clipboardListenerWindow = new ClipboardListenerWindow(this);
 
         mouseHookProc = MouseHookCallback;
         keyboardHookProc = KeyboardHookCallback;
@@ -564,10 +583,13 @@ internal sealed class TrayContext : ApplicationContext
                 return;
             }
 
-            WriteVoiceObservationSummary(attempt, sequence, "BEFORE_ENTER");
+            string finalText = WriteVoiceObservationSummary(attempt, sequence, "BEFORE_ENTER");
+            WeixinContextSnapshot weixinContext = CaptureWeixinContext(finalText);
             EndVoiceTargetObservation(attempt, "BEFORE_ENTER");
             SendEnter();
             LogVoice(attempt, "ENTER_SENT");
+            if (weixinContext != null)
+                WriteWeixinContext(weixinContext, "enter_sent");
             TryHaptic();
             UpdateVoiceStatus("语音：已发送，待机");
         });
@@ -615,6 +637,14 @@ internal sealed class TrayContext : ApplicationContext
                 string summaryPath = Path.Combine(Application.StartupPath, "voice-summary.jsonl");
                 if (!File.Exists(summaryPath))
                     File.WriteAllText(summaryPath, string.Empty, Encoding.UTF8);
+
+                string copyPath = Path.Combine(Application.StartupPath, "copy-summary.jsonl");
+                if (!File.Exists(copyPath))
+                    File.WriteAllText(copyPath, string.Empty, Encoding.UTF8);
+
+                string weixinPath = Path.Combine(Application.StartupPath, "weixin-context.jsonl");
+                if (!File.Exists(weixinPath))
+                    File.WriteAllText(weixinPath, string.Empty, Encoding.UTF8);
             }
         }
         catch
@@ -642,6 +672,8 @@ internal sealed class TrayContext : ApplicationContext
         string title = GetWindowTitle(hwnd);
         AutomationElement focused = null;
         string attachReason = string.Empty;
+        string focusedClassName = string.Empty;
+        string focusedAutomationId = string.Empty;
         try
         {
             focused = AutomationElement.FocusedElement;
@@ -651,6 +683,11 @@ internal sealed class TrayContext : ApplicationContext
                 attachReason = "focused_pid_mismatch";
             else if (focused.Current.ControlType != ControlType.Edit)
                 attachReason = "focused_not_edit";
+            else
+            {
+                focusedClassName = focused.Current.ClassName ?? string.Empty;
+                focusedAutomationId = focused.Current.AutomationId ?? string.Empty;
+            }
         }
         catch (Exception ex)
         {
@@ -664,6 +701,8 @@ internal sealed class TrayContext : ApplicationContext
             savedTargetPid = (int)pidValue;
             savedTargetProcess = processName;
             savedTargetTitle = title;
+            savedTargetClassName = focusedClassName;
+            savedTargetAutomationId = focusedAutomationId;
             observedVoiceAttempt = attempt;
             observedTextChangedCount = 0;
             observedSummaryWritten = false;
@@ -674,7 +713,9 @@ internal sealed class TrayContext : ApplicationContext
         LogVoice(attempt, "TARGET_SAVED hwnd=0x" + hwnd.ToInt64().ToString("X") +
             " pid=" + pidValue +
             " process=" + EscapeLogValue(processName) +
-            " title=\"" + EscapeLogValue(title) + "\"");
+            " title=\"" + EscapeLogValue(title) + "\"" +
+            " class=\"" + EscapeLogValue(focusedClassName) + "\"" +
+            " aid=\"" + EscapeLogValue(focusedAutomationId) + "\"");
 
         if (focused == null)
         {
@@ -723,7 +764,7 @@ internal sealed class TrayContext : ApplicationContext
         LogVoice(attempt, "UIA_TEXT_CHANGED count=" + count);
     }
 
-    private void WriteVoiceObservationSummary(int attempt, int sequence, string reason)
+    private string WriteVoiceObservationSummary(int attempt, int sequence, string reason)
     {
         AutomationElement element;
         IntPtr hwnd;
@@ -735,7 +776,7 @@ internal sealed class TrayContext : ApplicationContext
         lock (voiceObservationLock)
         {
             if (attempt != observedVoiceAttempt || observedSummaryWritten)
-                return;
+                return string.Empty;
             observedSummaryWritten = true;
             element = observedTargetElement;
             hwnd = savedTargetHwnd;
@@ -745,7 +786,7 @@ internal sealed class TrayContext : ApplicationContext
             eventCount = observedTextChangedCount;
         }
 
-        string text = ReadAutomationText(element);
+        string text = ReadAutomationText(element, process);
         bool usable = IsUsableInputText(text);
         string summaryPath = Path.Combine(Application.StartupPath, "voice-summary.jsonl");
         string line = "{\"attempt\":" + attempt +
@@ -776,6 +817,8 @@ internal sealed class TrayContext : ApplicationContext
         {
             LogVoice(attempt, "UIA_FINAL_READ_FAILED reason=" + ex.GetType().Name);
         }
+
+        return text;
     }
 
     private void EndVoiceTargetObservation(int attempt, string reason)
@@ -810,13 +853,227 @@ internal sealed class TrayContext : ApplicationContext
             LogVoice(attempt, "UIA_OBSERVATION_STOP reason=" + EscapeLogValue(reason));
     }
 
-    private static string ReadAutomationText(AutomationElement element)
+    private void OnClipboardUpdate()
+    {
+        pendingClipboardSequence = GetClipboardSequenceNumber();
+        if (pendingClipboardSequence == 0 ||
+            pendingClipboardSequence == lastLoggedClipboardSequence)
+            return;
+
+        if (!TryCaptureClipboard("UPDATE"))
+        {
+            clipboardRetryTimer.Stop();
+            clipboardRetryTimer.Start();
+        }
+    }
+
+    private bool TryCaptureClipboard(string reason)
+    {
+        uint sequence = pendingClipboardSequence != 0
+            ? pendingClipboardSequence
+            : GetClipboardSequenceNumber();
+
+        if (sequence == 0 || sequence == lastLoggedClipboardSequence)
+            return true;
+
+        try
+        {
+            if (!Clipboard.ContainsText(TextDataFormat.UnicodeText))
+            {
+                lastLoggedClipboardSequence = sequence;
+                pendingClipboardSequence = 0;
+                return true;
+            }
+
+            string text = Clipboard.GetText(TextDataFormat.UnicodeText) ?? string.Empty;
+            if (text.Length == 0)
+            {
+                lastLoggedClipboardSequence = sequence;
+                pendingClipboardSequence = 0;
+                return true;
+            }
+
+            IntPtr hwnd = GetForegroundWindow();
+            uint pidValue = 0;
+            if (hwnd != IntPtr.Zero)
+                GetWindowThreadProcessId(hwnd, out pidValue);
+
+            string processName = string.Empty;
+            try
+            {
+                if (pidValue != 0)
+                    processName = Process.GetProcessById((int)pidValue).ProcessName;
+            }
+            catch { }
+
+            string title = GetWindowTitle(hwnd);
+            string copyPath = Path.Combine(Application.StartupPath, "copy-summary.jsonl");
+            string line = "{\"time\":\"" +
+                JsonEscape(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff")) +
+                "\",\"reason\":\"" + JsonEscape(reason) +
+                "\",\"sequence\":" + sequence +
+                ",\"window\":{\"hwnd\":\"0x" + hwnd.ToInt64().ToString("X") +
+                "\",\"pid\":" + pidValue +
+                ",\"process\":\"" + JsonEscape(processName) +
+                "\",\"title\":\"" + JsonEscape(title) +
+                "\"},\"textLength\":" + text.Length +
+                ",\"text\":\"" + JsonEscape(text) + "\"}";
+
+            lock (voiceLogLock)
+            {
+                File.AppendAllText(copyPath, line + Environment.NewLine, Encoding.UTF8);
+            }
+
+            lastLoggedClipboardSequence = sequence;
+            pendingClipboardSequence = 0;
+            LogVoice(0, "CLIPBOARD_CAPTURED sequence=" + sequence +
+                " len=" + text.Length + " summary=copy-summary.jsonl");
+            return true;
+        }
+        catch (ExternalException ex)
+        {
+            LogVoice(0, "CLIPBOARD_BUSY sequence=" + sequence +
+                " hr=0x" + ex.ErrorCode.ToString("X8"));
+            return false;
+        }
+        catch (Exception ex)
+        {
+            LogVoice(0, "CLIPBOARD_CAPTURE_FAILED sequence=" + sequence +
+                " reason=" + ex.GetType().Name);
+            return false;
+        }
+    }
+
+    private WeixinContextSnapshot CaptureWeixinContext(string outgoingText)
+    {
+        if (!IsWeixinProcess(savedTargetProcess) || !IsUsableInputText(outgoingText))
+            return null;
+
+        try
+        {
+            AutomationElement root = AutomationElement.FromHandle(savedTargetHwnd);
+            if (root == null)
+                return null;
+
+            string chatName = string.Empty;
+            AutomationElement titleElement = root.FindFirst(
+                TreeScope.Descendants,
+                new PropertyCondition(
+                    AutomationElement.AutomationIdProperty,
+                    "content_view.top_content_view.title_h_view.left_v_view.left_content_v_view.left_ui_.big_title_line_h_view.current_chat_name_label"));
+            if (titleElement != null)
+                chatName = titleElement.Current.Name ?? string.Empty;
+
+            if (chatName.Length == 0 && observedTargetElement != null)
+                chatName = observedTargetElement.Current.Name ?? string.Empty;
+
+            List<string> recentMessages = new List<string>();
+            AutomationElement messageList = root.FindFirst(
+                TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.AutomationIdProperty, "chat_message_list"));
+            if (messageList != null)
+            {
+                AutomationElementCollection items = messageList.FindAll(
+                    TreeScope.Children, Condition.TrueCondition);
+                int start = Math.Max(0, items.Count - 3);
+                for (int i = start; i < items.Count; i++)
+                {
+                    string message = items[i].Current.Name ?? string.Empty;
+                    if (message.Trim().Length > 0)
+                        recentMessages.Add(message);
+                }
+            }
+
+            return new WeixinContextSnapshot
+            {
+                Attempt = observedVoiceAttempt,
+                Hwnd = savedTargetHwnd,
+                Pid = savedTargetPid,
+                Process = savedTargetProcess,
+                WindowTitle = savedTargetTitle,
+                ChatName = chatName,
+                RecentMessages = recentMessages,
+                OutgoingText = outgoingText
+            };
+        }
+        catch (Exception ex)
+        {
+            LogVoice(observedVoiceAttempt, "WEIXIN_CONTEXT_READ_FAILED reason=" + ex.GetType().Name);
+            return null;
+        }
+    }
+
+    private void WriteWeixinContext(WeixinContextSnapshot snapshot, string sendStatus)
+    {
+        try
+        {
+            StringBuilder messages = new StringBuilder();
+            for (int i = 0; i < snapshot.RecentMessages.Count; i++)
+            {
+                if (i > 0)
+                    messages.Append(",");
+                messages.Append("\"").Append(JsonEscape(snapshot.RecentMessages[i])).Append("\"");
+            }
+
+            string path = Path.Combine(Application.StartupPath, "weixin-context.jsonl");
+            string line = "{\"time\":\"" +
+                JsonEscape(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff")) +
+                "\",\"attempt\":" + snapshot.Attempt +
+                ",\"chatKey\":\"Weixin|" + JsonEscape(snapshot.ChatName) +
+                "\",\"chatName\":\"" + JsonEscape(snapshot.ChatName) +
+                "\",\"window\":{\"hwnd\":\"0x" + snapshot.Hwnd.ToInt64().ToString("X") +
+                "\",\"pid\":" + snapshot.Pid +
+                ",\"process\":\"" + JsonEscape(snapshot.Process) +
+                "\",\"title\":\"" + JsonEscape(snapshot.WindowTitle) +
+                "\"},\"recentVisibleMessages\":[" + messages.ToString() +
+                "],\"outgoingText\":\"" + JsonEscape(snapshot.OutgoingText) +
+                "\",\"sendStatus\":\"" + JsonEscape(sendStatus) +
+                "\",\"source\":\"UIA\",\"scope\":\"visible-last-3\"}";
+
+            lock (voiceLogLock)
+            {
+                File.AppendAllText(path, line + Environment.NewLine, Encoding.UTF8);
+            }
+            LogVoice(snapshot.Attempt, "WEIXIN_CONTEXT_SAVED chat=\"" +
+                EscapeLogValue(snapshot.ChatName) + "\" messages=" +
+                snapshot.RecentMessages.Count + " summary=weixin-context.jsonl");
+        }
+        catch (Exception ex)
+        {
+            LogVoice(snapshot.Attempt, "WEIXIN_CONTEXT_SAVE_FAILED reason=" + ex.GetType().Name);
+        }
+    }
+
+    private static bool IsWeixinProcess(string processName)
+    {
+        return string.Equals(processName, "Weixin", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(processName, "WeChat", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class WeixinContextSnapshot
+    {
+        public int Attempt;
+        public IntPtr Hwnd;
+        public int Pid;
+        public string Process;
+        public string WindowTitle;
+        public string ChatName;
+        public List<string> RecentMessages;
+        public string OutgoingText;
+    }
+
+    private static string ReadAutomationText(AutomationElement element, string processName)
     {
         if (element == null)
             return string.Empty;
 
         try
         {
+            // Chromium 的网页容器可能把整个页面暴露为根 TextPattern。
+            // 浏览器只读取真正编辑器的直接子节点，避免把网页正文当成输入内容。
+            if (IsBrowserProcess(processName))
+                return ReadBrowserEditorText(element);
+
             object patternObject;
             if (element.TryGetCurrentPattern(ValuePattern.Pattern, out patternObject))
             {
@@ -841,6 +1098,53 @@ internal sealed class TrayContext : ApplicationContext
                 if (child.TryGetCurrentPattern(TextPattern.Pattern, out patternObject))
                     builder.Append(((TextPattern)patternObject).DocumentRange.GetText(-1));
             }
+            return builder.ToString();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static bool IsBrowserProcess(string processName)
+    {
+        return string.Equals(processName, "chrome", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(processName, "msedge", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(processName, "brave", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(processName, "opera", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ReadBrowserEditorText(AutomationElement element)
+    {
+        try
+        {
+            string className = element.Current.ClassName ?? string.Empty;
+            string automationId = element.Current.AutomationId ?? string.Empty;
+            bool looksLikeRichEditor =
+                className.IndexOf("ProseMirror", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                className.IndexOf("contenteditable", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                automationId.IndexOf("editor", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            if (!looksLikeRichEditor)
+                return string.Empty;
+
+            AutomationElementCollection children = element.FindAll(
+                TreeScope.Children, Condition.TrueCondition);
+            StringBuilder builder = new StringBuilder();
+            for (int i = 0; i < children.Count; i++)
+            {
+                AutomationElement child = children[i];
+                object patternObject;
+                if (child.TryGetCurrentPattern(TextPattern.Pattern, out patternObject))
+                {
+                    builder.Append(((TextPattern)patternObject).DocumentRange.GetText(-1));
+                    continue;
+                }
+
+                if (child.TryGetCurrentPattern(ValuePattern.Pattern, out patternObject))
+                    builder.Append(((ValuePattern)patternObject).Current.Value);
+            }
+
             return builder.ToString();
         }
         catch
@@ -1176,6 +1480,18 @@ internal sealed class TrayContext : ApplicationContext
             repeatTimer = null;
         }
 
+        if (clipboardRetryTimer != null)
+        {
+            clipboardRetryTimer.Stop();
+            clipboardRetryTimer.Dispose();
+        }
+
+        if (clipboardListenerWindow != null)
+        {
+            clipboardListenerWindow.Dispose();
+            clipboardListenerWindow = null;
+        }
+
         if (trayIcon != null)
         {
             trayIcon.Visible = false;
@@ -1187,6 +1503,38 @@ internal sealed class TrayContext : ApplicationContext
 
     private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    private sealed class ClipboardListenerWindow : NativeWindow, IDisposable
+    {
+        private readonly TrayContext owner;
+        private bool registered;
+
+        public ClipboardListenerWindow(TrayContext owner)
+        {
+            this.owner = owner;
+            CreateHandle(new CreateParams());
+            registered = AddClipboardFormatListener(Handle);
+            owner.LogVoice(0, "CLIPBOARD_LISTENER registered=" + (registered ? "1" : "0"));
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_CLIPBOARDUPDATE)
+                owner.OnClipboardUpdate();
+            base.WndProc(ref m);
+        }
+
+        public void Dispose()
+        {
+            if (Handle != IntPtr.Zero)
+            {
+                if (registered)
+                    RemoveClipboardFormatListener(Handle);
+                DestroyHandle();
+            }
+            registered = false;
+        }
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT
@@ -1240,6 +1588,17 @@ internal sealed class TrayContext : ApplicationContext
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AddClipboardFormatListener(IntPtr hwnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetClipboardSequenceNumber();
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint GetWindowThreadProcessId(
