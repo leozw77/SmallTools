@@ -3,9 +3,12 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Net;
+using System.IO;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using System.Windows.Automation;
 
 internal static class Program
 {
@@ -133,6 +136,21 @@ internal sealed class TrayContext : ApplicationContext
     private int activeVoiceAttempt = 0;
     private long voiceHeldStartedTimestamp = 0;
     private readonly object voiceLogLock = new object();
+
+    // Voice input validation: remember the GPT target and observe UIA text changes.
+    // This diagnostic path does not change Enter behavior and never writes
+    // intermediate text to the summary log.
+    private readonly object voiceObservationLock = new object();
+    private AutomationElement observedTargetElement;
+    private AutomationEventHandler observedTextChangedHandler;
+    private IntPtr savedTargetHwnd = IntPtr.Zero;
+    private int savedTargetPid = 0;
+    private string savedTargetProcess = string.Empty;
+    private string savedTargetTitle = string.Empty;
+    private int observedVoiceAttempt = 0;
+    private int observedTextChangedCount = 0;
+    private bool observedTargetAttached = false;
+    private bool observedSummaryWritten = false;
 
     private System.Threading.Timer repeatTimer;
 
@@ -498,6 +516,7 @@ internal sealed class TrayContext : ApplicationContext
                 Interlocked.Increment(ref voiceSequence);
                 voiceHeld = true;
                 voiceHeldStartedTimestamp = Stopwatch.GetTimestamp();
+                BeginVoiceTargetObservation(activeVoiceAttempt);
                 LogVoice(activeVoiceAttempt, "VOICE_HELD");
                 voiceKeepDraft = false;
                 middleButtonCaptured = false;
@@ -527,6 +546,8 @@ internal sealed class TrayContext : ApplicationContext
             // 保留草稿时不需要再发任何 Enter。
             if (keepDraft)
             {
+                WriteVoiceObservationSummary(attempt, sequence, "KEEP_DRAFT");
+                EndVoiceTargetObservation(attempt, "KEEP_DRAFT");
                 UpdateVoiceStatus("语音：已保留文字，待机");
                 return;
             }
@@ -537,8 +558,13 @@ internal sealed class TrayContext : ApplicationContext
             LogVoice(attempt, "SEND_CHECK seq=" + sequence + " current=" + Volatile.Read(ref voiceSequence) + " enabled=" + (voiceEnabled ? "1" : "0"));
 
             if (sequence != Volatile.Read(ref voiceSequence) || !voiceEnabled)
+            {
+                EndVoiceTargetObservation(attempt, "CANCELLED");
                 return;
+            }
 
+            WriteVoiceObservationSummary(attempt, sequence, "BEFORE_ENTER");
+            EndVoiceTargetObservation(attempt, "BEFORE_ENTER");
             SendEnter();
             LogVoice(attempt, "ENTER_SENT");
             TryHaptic();
@@ -548,6 +574,7 @@ internal sealed class TrayContext : ApplicationContext
 
     private void ResetVoiceState()
     {
+        EndVoiceTargetObservation(0, "RESET");
         Interlocked.Increment(ref voiceSequence);
         voiceHeld = false;
         voiceKeepDraft = false;
@@ -568,6 +595,263 @@ internal sealed class TrayContext : ApplicationContext
         catch
         {
         }
+    }
+
+    private void BeginVoiceTargetObservation(int attempt)
+    {
+        EndVoiceTargetObservation(attempt, "NEW_SESSION");
+
+        IntPtr hwnd = GetForegroundWindow();
+        uint pidValue = 0;
+        if (hwnd != IntPtr.Zero)
+            GetWindowThreadProcessId(hwnd, out pidValue);
+
+        string processName = string.Empty;
+        try
+        {
+            if (pidValue != 0)
+                processName = Process.GetProcessById((int)pidValue).ProcessName;
+        }
+        catch { }
+
+        string title = GetWindowTitle(hwnd);
+        AutomationElement focused = null;
+        string attachReason = string.Empty;
+        try
+        {
+            focused = AutomationElement.FocusedElement;
+            if (focused == null)
+                attachReason = "focused_null";
+            else if (focused.Current.ProcessId != (int)pidValue)
+                attachReason = "focused_pid_mismatch";
+            else if (focused.Current.ControlType != ControlType.Edit)
+                attachReason = "focused_not_edit";
+        }
+        catch (Exception ex)
+        {
+            attachReason = ex.GetType().Name;
+            focused = null;
+        }
+
+        lock (voiceObservationLock)
+        {
+            savedTargetHwnd = hwnd;
+            savedTargetPid = (int)pidValue;
+            savedTargetProcess = processName;
+            savedTargetTitle = title;
+            observedVoiceAttempt = attempt;
+            observedTextChangedCount = 0;
+            observedSummaryWritten = false;
+            observedTargetElement = focused;
+            observedTargetAttached = false;
+        }
+
+        LogVoice(attempt, "TARGET_SAVED hwnd=0x" + hwnd.ToInt64().ToString("X") +
+            " pid=" + pidValue +
+            " process=" + EscapeLogValue(processName) +
+            " title=\"" + EscapeLogValue(title) + "\"");
+
+        if (focused == null)
+        {
+            LogVoice(attempt, "UIA_OBSERVATION_ATTACHED=0 reason=" + EscapeLogValue(attachReason));
+            return;
+        }
+
+        try
+        {
+            AutomationEventHandler handler = delegate(object sender, AutomationEventArgs args)
+            {
+                OnObservedTextChanged(attempt);
+            };
+
+            Automation.AddAutomationEventHandler(
+                TextPattern.TextChangedEvent,
+                focused,
+                TreeScope.Element,
+                handler);
+
+            lock (voiceObservationLock)
+            {
+                observedTextChangedHandler = handler;
+                observedTargetAttached = true;
+            }
+            LogVoice(attempt, "UIA_OBSERVATION_ATTACHED=1 event=TextChanged");
+        }
+        catch (Exception ex)
+        {
+            LogVoice(attempt, "UIA_OBSERVATION_ATTACHED=0 reason=" + ex.GetType().Name);
+        }
+    }
+
+    private void OnObservedTextChanged(int attempt)
+    {
+        int count;
+        lock (voiceObservationLock)
+        {
+            if (attempt != observedVoiceAttempt)
+                return;
+            observedTextChangedCount++;
+            count = observedTextChangedCount;
+        }
+
+        // Do not read or log the full text for every event.
+        LogVoice(attempt, "UIA_TEXT_CHANGED count=" + count);
+    }
+
+    private void WriteVoiceObservationSummary(int attempt, int sequence, string reason)
+    {
+        AutomationElement element;
+        IntPtr hwnd;
+        int pid;
+        string process;
+        string title;
+        int eventCount;
+
+        lock (voiceObservationLock)
+        {
+            if (attempt != observedVoiceAttempt || observedSummaryWritten)
+                return;
+            observedSummaryWritten = true;
+            element = observedTargetElement;
+            hwnd = savedTargetHwnd;
+            pid = savedTargetPid;
+            process = savedTargetProcess;
+            title = savedTargetTitle;
+            eventCount = observedTextChangedCount;
+        }
+
+        string text = ReadAutomationText(element);
+        bool usable = IsUsableInputText(text);
+        string summaryPath = Path.Combine(Application.StartupPath, "voice-summary.jsonl");
+        string line = "{\"attempt\":" + attempt +
+            ",\"sequence\":" + sequence +
+            ",\"reason\":\"" + JsonEscape(reason) + "\"" +
+            ",\"target\":{\"hwnd\":\"0x" + hwnd.ToInt64().ToString("X") +
+            "\",\"pid\":" + pid +
+            ",\"process\":\"" + JsonEscape(process) +
+            "\",\"title\":\"" + JsonEscape(title) + "\"}" +
+            ",\"textChangedEvents\":" + eventCount +
+            ",\"readOk\":" + (usable ? "true" : "false") +
+            ",\"textLength\":" + text.Length +
+            ",\"finalText\":\"" + JsonEscape(text) + "\"}";
+
+        try
+        {
+            lock (voiceLogLock)
+            {
+                File.AppendAllText(summaryPath, line + Environment.NewLine, Encoding.UTF8);
+            }
+            LogVoice(attempt, "UIA_FINAL_READ reason=" + reason +
+                " events=" + eventCount +
+                " readOk=" + (usable ? "1" : "0") +
+                " len=" + text.Length +
+                " summary=voice-summary.jsonl");
+        }
+        catch (Exception ex)
+        {
+            LogVoice(attempt, "UIA_FINAL_READ_FAILED reason=" + ex.GetType().Name);
+        }
+    }
+
+    private void EndVoiceTargetObservation(int attempt, string reason)
+    {
+        AutomationElement element;
+        AutomationEventHandler handler;
+        bool attached;
+
+        lock (voiceObservationLock)
+        {
+            element = observedTargetElement;
+            handler = observedTextChangedHandler;
+            attached = observedTargetAttached;
+            observedTargetElement = null;
+            observedTextChangedHandler = null;
+            observedTargetAttached = false;
+        }
+
+        if (attached && element != null && handler != null)
+        {
+            try
+            {
+                Automation.RemoveAutomationEventHandler(
+                    TextPattern.TextChangedEvent,
+                    element,
+                    handler);
+            }
+            catch { }
+        }
+
+        if (attempt != 0)
+            LogVoice(attempt, "UIA_OBSERVATION_STOP reason=" + EscapeLogValue(reason));
+    }
+
+    private static string ReadAutomationText(AutomationElement element)
+    {
+        if (element == null)
+            return string.Empty;
+
+        try
+        {
+            object patternObject;
+            if (element.TryGetCurrentPattern(ValuePattern.Pattern, out patternObject))
+            {
+                string value = ((ValuePattern)patternObject).Current.Value ?? string.Empty;
+                if (value.Length > 0)
+                    return value;
+            }
+
+            if (element.TryGetCurrentPattern(TextPattern.Pattern, out patternObject))
+            {
+                string value = ((TextPattern)patternObject).DocumentRange.GetText(-1) ?? string.Empty;
+                if (value.Length > 0)
+                    return value;
+            }
+
+            AutomationElementCollection children = element.FindAll(
+                TreeScope.Children, Condition.TrueCondition);
+            StringBuilder builder = new StringBuilder();
+            for (int i = 0; i < children.Count; i++)
+            {
+                AutomationElement child = children[i];
+                if (child.TryGetCurrentPattern(TextPattern.Pattern, out patternObject))
+                    builder.Append(((TextPattern)patternObject).DocumentRange.GetText(-1));
+            }
+            return builder.ToString();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static bool IsUsableInputText(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return false;
+
+        string normalized = text.Trim('\r', '\n', ' ', '\t');
+        return normalized.Length > 0 &&
+            !string.Equals(normalized, "使用 ChatGPT Work", StringComparison.Ordinal);
+    }
+
+    private static string GetWindowTitle(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+            return string.Empty;
+        StringBuilder builder = new StringBuilder(256);
+        GetWindowText(hwnd, builder, builder.Capacity);
+        return builder.ToString();
+    }
+
+    private static string EscapeLogValue(string value)
+    {
+        return (value ?? string.Empty).Replace("\\", "\\\\")
+            .Replace("\r", "\\r").Replace("\n", "\\n").Replace("\"", "\\\"");
+    }
+
+    private static string JsonEscape(string value)
+    {
+        return EscapeLogValue(value);
     }
 
     private void UpdateVoiceStatus(string text)
@@ -928,6 +1212,17 @@ internal sealed class TrayContext : ApplicationContext
     [DllImport("user32.dll")]
     private static extern void keybd_event(
         byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetWindowThreadProcessId(
+        IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetWindowText(
+        IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
