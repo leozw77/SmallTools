@@ -157,6 +157,7 @@ internal sealed class TrayContext : ApplicationContext
     public TrayContext()
     {
         LoadSettings();
+        InitializeVoiceValidationLogs();
 
         mouseHookProc = MouseHookCallback;
         keyboardHookProc = KeyboardHookCallback;
@@ -590,6 +591,30 @@ internal sealed class TrayContext : ApplicationContext
             {
                 string logPath = System.IO.Path.Combine(Application.StartupPath, "voice.log");
                 System.IO.File.AppendAllText(logPath, DateTime.Now.ToString("HH:mm:ss.fff") + " attempt=" + attempt + " " + message + Environment.NewLine);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private void InitializeVoiceValidationLogs()
+    {
+        try
+        {
+            lock (voiceLogLock)
+            {
+                string logPath = Path.Combine(Application.StartupPath, "voice.log");
+                File.AppendAllText(
+                    logPath,
+                    DateTime.Now.ToString("HH:mm:ss.fff") +
+                    " attempt=0 RUN_START validation=uia-textchanged" +
+                    Environment.NewLine,
+                    Encoding.UTF8);
+
+                string summaryPath = Path.Combine(Application.StartupPath, "voice-summary.jsonl");
+                if (!File.Exists(summaryPath))
+                    File.WriteAllText(summaryPath, string.Empty, Encoding.UTF8);
             }
         }
         catch
