@@ -322,7 +322,6 @@ internal sealed class ProbeContext : ApplicationContext
 
                 LogValuePattern(label, element);
                 LogTextPattern(label, element);
-                LogLegacyIAccessible(label, element);
             }
             catch (Exception ex)
             {
@@ -404,46 +403,6 @@ internal sealed class ProbeContext : ApplicationContext
                 Log(
                     label
                     + " TextPattern_ERROR "
-                    + ex.GetType().Name
-                    + " "
-                    + EscapeAndTruncate(ex.Message));
-            }
-        }
-
-        private void LogLegacyIAccessible(
-            string label,
-            AutomationElement element)
-        {
-            try
-            {
-                object pattern;
-
-                if (!element.TryGetCurrentPattern(
-                    LegacyIAccessiblePattern.Pattern,
-                    out pattern))
-                {
-                    Log(
-                        label
-                        + " LegacyIAccessible=(unsupported)");
-                    return;
-                }
-
-                string value =
-                    ((LegacyIAccessiblePattern)pattern)
-                    .Current
-                    .Value
-                    ?? "";
-
-                Log(
-                    label
-                    + " LegacyIAccessible "
-                    + FormatText(value));
-            }
-            catch (Exception ex)
-            {
-                Log(
-                    label
-                    + " LegacyIAccessible_ERROR "
                     + ex.GetType().Name
                     + " "
                     + EscapeAndTruncate(ex.Message));
