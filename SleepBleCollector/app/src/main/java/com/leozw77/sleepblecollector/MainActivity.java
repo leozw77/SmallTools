@@ -36,8 +36,10 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -49,9 +51,12 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ArrayDeque<BluetoothGattDescriptor> descriptorQueue = new ArrayDeque<>();
     private final ArrayDeque<BluetoothGattCharacteristic> readQueue = new ArrayDeque<>();
+    private final Map<String, Candidate> candidates = new LinkedHashMap<>();
     private final Set<String> loggedAdvertisements = new HashSet<>();
 
     private TextView statusView;
+    private TextView candidateTitle;
+    private LinearLayout candidateContainer;
     private TextView logView;
     private Button actionButton;
     private BluetoothAdapter adapter;
@@ -60,7 +65,23 @@ public class MainActivity extends Activity {
     private FileWriter capture;
     private boolean scanning;
     private boolean connecting;
-    private String capturePath = "";
+    private boolean connected;
+
+    private static final class Candidate {
+        final BluetoothDevice device;
+        final String name;
+        final String address;
+        final byte[] advertisement;
+        int rssi;
+
+        Candidate(BluetoothDevice device, String name, String address, int rssi, byte[] advertisement) {
+            this.device = device;
+            this.name = name;
+            this.address = address;
+            this.rssi = rssi;
+            this.advertisement = advertisement;
+        }
+    }
 
     @Override
     protected void onCreate(Bundle state) {
@@ -76,34 +97,41 @@ public class MainActivity extends Activity {
         root.setPadding(28, 24, 28, 16);
 
         TextView title = new TextView(this);
-        title.setText("Sleep BLE Collector\n记录设备 BLE 原始数据");
-        title.setTextSize(21);
+        title.setText("Sleep BLE Collector\n数据采集版：先选设备，再记录原始 BLE");
+        title.setTextSize(20);
         root.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         statusView = new TextView(this);
         statusView.setTextSize(15);
-        statusView.setPadding(0, 18, 0, 12);
+        statusView.setPadding(0, 16, 0, 8);
         root.addView(statusView, new LinearLayout.LayoutParams(-1, -2));
 
         actionButton = new Button(this);
         actionButton.setText("开始扫描");
         actionButton.setOnClickListener(v -> {
-            if (scanning) {
-                stopScan("用户停止");
-            } else {
-                ensurePermissionsAndScan();
-            }
+            if (gatt != null) disconnect("用户断开");
+            else if (scanning) stopScan("用户停止");
+            else ensurePermissionsAndScan();
         });
         root.addView(actionButton, new LinearLayout.LayoutParams(-1, -2));
 
         TextView hint = new TextView(this);
-        hint.setText("请保持睡眠监测带通电并靠近手机。日志保存在应用专属 Documents 目录。\n" +
-                "只记录原始协议数据，不上传、不修改设备。");
-        hint.setPadding(0, 12, 0, 12);
+        hint.setText("只记录广播、GATT 服务、可读值和通知/指示原始字节。\n" +
+                "不会登录、上传、修改设备或进行睡眠判断。");
+        hint.setPadding(0, 10, 0, 8);
         root.addView(hint, new LinearLayout.LayoutParams(-1, -2));
 
+        candidateTitle = new TextView(this);
+        candidateTitle.setText("候选设备：扫描后在这里选择");
+        candidateTitle.setTextSize(15);
+        root.addView(candidateTitle, new LinearLayout.LayoutParams(-1, -2));
+
+        candidateContainer = new LinearLayout(this);
+        candidateContainer.setOrientation(LinearLayout.VERTICAL);
+        root.addView(candidateContainer, new LinearLayout.LayoutParams(-1, -2));
+
         logView = new TextView(this);
-        logView.setTextSize(12);
+        logView.setTextSize(11);
         logView.setTypeface(android.graphics.Typeface.MONOSPACE);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(logView, new ScrollView.LayoutParams(-1, -2));
@@ -118,7 +146,7 @@ public class MainActivity extends Activity {
             setStatus("手机不支持蓝牙 LE");
             return;
         }
-        setStatus("准备就绪：将自动扫描名称包含 midea 的 BLE 设备");
+        setStatus("准备就绪：将扫描所有名称包含 midea 的设备");
         ensurePermissionsAndScan();
     }
 
@@ -163,11 +191,14 @@ public class MainActivity extends Activity {
             setStatus("BLE 扫描器不可用");
             return;
         }
+        candidates.clear();
         loggedAdvertisements.clear();
-        connecting = false;
+        renderCandidates();
         scanning = true;
+        connecting = false;
+        connected = false;
         actionButton.setText("停止扫描");
-        writeLog("SCAN_START\twindow_ms=" + SCAN_MILLIS);
+        writeLog("SCAN_START\twindow_ms=" + SCAN_MILLIS + "\tfilter=name_contains_midea");
         try {
             ScanSettings settings = new ScanSettings.Builder()
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
@@ -176,9 +207,9 @@ public class MainActivity extends Activity {
             handler.postDelayed(() -> {
                 if (scanning) stopScan("30 秒扫描窗口结束");
             }, SCAN_MILLIS);
-            setStatus("正在扫描：等待 midea 广播");
+            setStatus("正在扫描：发现设备后请手动选择真正的睡眠带");
         } catch (SecurityException e) {
-            setStatus("扫描权限异常：" + e.getMessage());
+            setStatus("扫描权限异常");
             writeLog("SCAN_ERROR\t" + e);
         }
     }
@@ -186,14 +217,14 @@ public class MainActivity extends Activity {
     private void stopScan(String reason) {
         if (!scanning) return;
         scanning = false;
-        actionButton.setText("重新扫描");
+        actionButton.setText(gatt == null ? "重新扫描" : "断开连接");
         try {
             if (scanner != null) scanner.stopScan(scanCallback);
         } catch (SecurityException e) {
             writeLog("SCAN_STOP_ERROR\t" + e);
         }
-        writeLog("SCAN_STOP\treason=" + reason);
-        if (!connecting) setStatus("扫描结束：未自动连接到 midea");
+        writeLog("SCAN_STOP\treason=" + reason + "\tcandidates=" + candidates.size());
+        if (!connecting && !connected) setStatus("扫描完成：请点击候选设备连接");
     }
 
     private final ScanCallback scanCallback = new ScanCallback() {
@@ -204,19 +235,22 @@ public class MainActivity extends Activity {
             if (name == null) {
                 try { name = device.getName(); } catch (SecurityException ignored) { }
             }
-            String address = safeAddress(device);
             byte[] adv = result.getScanRecord() == null ? null : result.getScanRecord().getBytes();
+            String address = safeAddress(device);
             String key = address + "|" + name + "|" + result.getRssi() + "|" + hex(adv);
             if (loggedAdvertisements.add(key)) {
                 writeLog("ADV\tname=" + safe(name) + "\taddress=" + address + "\trssi=" + result.getRssi() +
                         "\ttx_power=" + (result.getTxPower() == Integer.MIN_VALUE ? "unknown" : result.getTxPower()) +
                         "\traw=" + hex(adv));
-                appendUi("ADV " + safe(name) + " " + maskAddress(address) + " RSSI=" + result.getRssi());
             }
-            if (!connecting && name != null && name.toLowerCase(Locale.ROOT).contains("midea")) {
-                connecting = true;
-                stopScan("发现目标 " + safe(name));
-                connect(device);
+            if (name != null && name.toLowerCase(Locale.ROOT).contains("midea")) {
+                Candidate old = candidates.get(address);
+                if (old == null) {
+                    candidates.put(address, new Candidate(device, name, address, result.getRssi(), adv));
+                    renderCandidates();
+                } else {
+                    old.rssi = result.getRssi();
+                }
             }
         }
 
@@ -229,20 +263,39 @@ public class MainActivity extends Activity {
         }
     };
 
-    private void connect(BluetoothDevice device) {
-        String address = safeAddress(device);
-        setStatus("正在连接 midea：" + maskAddress(address));
-        writeLog("CONNECT_START\tname=" + safe(device.getName()) + "\taddress=" + address);
+    private void renderCandidates() {
+        runOnUiThread(() -> {
+            if (candidateContainer == null) return;
+            candidateContainer.removeAllViews();
+            candidateTitle.setText("候选设备：" + candidates.size() + " 个（必须手动选择）");
+            for (Candidate candidate : candidates.values()) {
+                Button button = new Button(this);
+                button.setText(candidate.name + "  RSSI=" + candidate.rssi + "  广播=" +
+                        (candidate.advertisement == null ? 0 : candidate.advertisement.length) + " bytes\n" +
+                        maskAddress(candidate.address));
+                button.setOnClickListener(v -> selectCandidate(candidate));
+                candidateContainer.addView(button, new LinearLayout.LayoutParams(-1, -2));
+            }
+        });
+    }
+
+    private void selectCandidate(Candidate candidate) {
+        stopScan("选择候选设备");
+        disconnect("切换候选设备");
+        connecting = true;
+        writeLog("SELECT_TARGET\tname=" + safe(candidate.name) + "\taddress=" + candidate.address +
+                "\trssi=" + candidate.rssi + "\tadvertisement_hex=" + hex(candidate.advertisement));
+        setStatus("正在连接已选择的 midea：" + maskAddress(candidate.address));
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                gatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
+                gatt = candidate.device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
             } else {
-                gatt = device.connectGatt(this, false, gattCallback);
+                gatt = candidate.device.connectGatt(this, false, gattCallback);
             }
         } catch (SecurityException e) {
-            writeLog("CONNECT_ERROR\t" + e);
-            setStatus("连接权限异常");
             connecting = false;
+            setStatus("连接权限异常");
+            writeLog("CONNECT_ERROR\t" + e);
         }
     }
 
@@ -251,12 +304,17 @@ public class MainActivity extends Activity {
         public void onConnectionStateChange(BluetoothGatt connectedGatt, int status, int newState) {
             writeLog("CONNECTION\tstatus=" + status + "\tstate=" + (newState == BluetoothProfile.STATE_CONNECTED ? "CONNECTED" : "DISCONNECTED"));
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                connected = true;
+                connecting = false;
+                actionButton.setText("断开连接");
                 setStatus("已连接，正在枚举 GATT 服务");
                 try { connectedGatt.discoverServices(); } catch (SecurityException e) { writeLog("DISCOVER_ERROR\t" + e); }
             } else {
-                setStatus("设备已断开；已保存当前日志");
+                connected = false;
                 connecting = false;
-                closeGatt();
+                actionButton.setText("重新扫描");
+                setStatus("设备已断开；原始日志已保存");
+                if (gatt == connectedGatt) closeGatt();
             }
         }
 
@@ -285,7 +343,8 @@ public class MainActivity extends Activity {
 
         @Override
         public void onDescriptorWrite(BluetoothGatt connectedGatt, BluetoothGattDescriptor descriptor, int status) {
-            writeLog("DESCRIPTOR_WRITE\tuuid=" + descriptor.getUuid() + "\tstatus=" + status);
+            writeLog("DESCRIPTOR_WRITE\tservice=" + descriptor.getCharacteristic().getService().getUuid() +
+                    "\tcharacteristic=" + descriptor.getCharacteristic().getUuid() + "\tuuid=" + descriptor.getUuid() + "\tstatus=" + status);
             configureNextDescriptor();
         }
 
@@ -325,14 +384,10 @@ public class MainActivity extends Activity {
                 : BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
         try {
             gatt.setCharacteristicNotification(characteristic, true);
-            if (Build.VERSION.SDK_INT >= 33) {
-                gatt.writeDescriptor(descriptor, value);
-            } else {
-                descriptor.setValue(value);
-                gatt.writeDescriptor(descriptor);
-            }
+            if (Build.VERSION.SDK_INT >= 33) gatt.writeDescriptor(descriptor, value);
+            else { descriptor.setValue(value); gatt.writeDescriptor(descriptor); }
         } catch (SecurityException e) {
-            writeLog("DESCRIPTOR_WRITE_ERROR\tuuid=" + descriptor.getUuid() + "\t" + e);
+            writeLog("DESCRIPTOR_WRITE_ERROR\t" + descriptor.getUuid() + "\t" + e);
             configureNextDescriptor();
         }
     }
@@ -341,7 +396,7 @@ public class MainActivity extends Activity {
         if (gatt == null) return;
         BluetoothGattCharacteristic characteristic = readQueue.poll();
         if (characteristic == null) {
-            setStatus("采集进行中：通知已订阅，等待设备上报");
+            setStatus("采集进行中：通知/指示已订阅，等待设备业务数据");
             writeLog("READY_FOR_NOTIFICATIONS");
             return;
         }
@@ -358,7 +413,6 @@ public class MainActivity extends Activity {
 
     private void logCharacteristic(String kind, UUID service, UUID characteristic, byte[] value, int status) {
         writeLog(kind + "\tservice=" + service + "\tcharacteristic=" + characteristic + "\tstatus=" + status + "\tvalue_hex=" + hex(value));
-        appendUi(kind + " " + characteristic + " bytes=" + (value == null ? 0 : value.length));
     }
 
     private void openCapture() {
@@ -370,10 +424,9 @@ public class MainActivity extends Activity {
             return;
         }
         File file = new File(dir, "ble_capture_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date()) + ".tsv");
-        capturePath = file.getAbsolutePath();
         try {
             capture = new FileWriter(file, true);
-            writeLog("CAPTURE_FILE\tpath=" + capturePath);
+            writeLog("CAPTURE_FILE\tpath=" + file.getAbsolutePath());
         } catch (IOException e) {
             setStatus("无法打开日志文件");
         }
@@ -390,8 +443,7 @@ public class MainActivity extends Activity {
     private void appendUi(String message) {
         runOnUiThread(() -> {
             if (logView == null) return;
-            String old = logView.getText().toString();
-            String next = old + message + "\n";
+            String next = logView.getText().toString() + message + "\n";
             if (next.length() > 12000) next = next.substring(next.length() - 12000);
             logView.setText(next);
         });
@@ -399,6 +451,15 @@ public class MainActivity extends Activity {
 
     private void setStatus(String text) {
         runOnUiThread(() -> { if (statusView != null) statusView.setText(text); });
+    }
+
+    private void disconnect(String reason) {
+        if (gatt == null) return;
+        writeLog("DISCONNECT_REQUEST\treason=" + reason);
+        try { gatt.disconnect(); } catch (SecurityException ignored) { }
+        closeGatt();
+        connected = false;
+        connecting = false;
     }
 
     private void closeGatt() {
@@ -438,7 +499,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         stopScan("应用关闭");
-        closeGatt();
+        disconnect("应用关闭");
         try { if (capture != null) capture.close(); } catch (IOException ignored) { }
         super.onDestroy();
     }
