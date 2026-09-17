@@ -50,6 +50,8 @@ public class MainActivity extends Activity {
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
     private static final UUID MIDEA_WRITE_SERVICE = UUID.fromString("0000ffe5-0000-1000-8000-00805f9b34fb");
     private static final UUID MIDEA_WRITE_CHARACTERISTIC = UUID.fromString("0000ffe9-0000-1000-8000-00805f9b34fb");
+    private static final UUID MIDEA_ALT_WRITE_SERVICE = UUID.fromString("0000ff80-0000-1000-8000-00805f9b34fb");
+    private static final UUID MIDEA_ALT_WRITE_CHARACTERISTIC = UUID.fromString("0000ff81-0000-1000-8000-00805f9b34fb");
     private static final int MIDEA_DEVICE_INFO_MSG_TYPE = 518;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -429,17 +431,20 @@ public class MainActivity extends Activity {
 
     private void sendMideaDeviceInfoProbe() {
         if (gatt == null) return;
-        BluetoothGattCharacteristic writeCharacteristic = null;
-        BluetoothGattService writeService = gatt.getService(MIDEA_WRITE_SERVICE);
-        if (writeService != null) writeCharacteristic = writeService.getCharacteristic(MIDEA_WRITE_CHARACTERISTIC);
-        if (writeCharacteristic == null) {
-            writeLog("PROBE_SKIPPED\treason=FFE9_NOT_FOUND");
-            return;
-        }
         int sequence = (int) ((System.currentTimeMillis() / 1000L) & 0x7F);
         byte[] frame = buildMideaProtocol1DeviceInfoFrame(sequence);
-        writeLog("PROBE_DEVICE_INFO\tservice=" + MIDEA_WRITE_SERVICE + "\tcharacteristic=" +
-                MIDEA_WRITE_CHARACTERISTIC + "\tmsg_type=" + MIDEA_DEVICE_INFO_MSG_TYPE +
+        boolean sent = probeWriteCharacteristic(MIDEA_WRITE_SERVICE, MIDEA_WRITE_CHARACTERISTIC, frame, "APK_DEFAULT_FFE9");
+        sent |= probeWriteCharacteristic(MIDEA_ALT_WRITE_SERVICE, MIDEA_ALT_WRITE_CHARACTERISTIC, frame, "DEVICE_ALT_FF81");
+        if (!sent) writeLog("PROBE_SKIPPED\treason=NO_SUPPORTED_WRITE_CHANNEL");
+    }
+
+    private boolean probeWriteCharacteristic(UUID serviceUuid, UUID characteristicUuid, byte[] frame, String channel) {
+        BluetoothGattService writeService = gatt.getService(serviceUuid);
+        BluetoothGattCharacteristic writeCharacteristic = writeService == null ? null
+                : writeService.getCharacteristic(characteristicUuid);
+        if (writeCharacteristic == null) return false;
+        writeLog("PROBE_DEVICE_INFO\tchannel=" + channel + "\tservice=" + serviceUuid + "\tcharacteristic=" +
+                characteristicUuid + "\tmsg_type=" + MIDEA_DEVICE_INFO_MSG_TYPE +
                 "\tprotocol=MedicaProtocol1\tframe_hex=" + hex(frame));
         try {
             boolean noResponse = (writeCharacteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0;
@@ -458,6 +463,7 @@ public class MainActivity extends Activity {
         } catch (SecurityException e) {
             writeLog("PROBE_WRITE_ERROR\t" + e);
         }
+        return true;
     }
 
     private byte[] buildMideaProtocol1DeviceInfoFrame(int sequence) {
