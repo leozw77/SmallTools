@@ -437,10 +437,10 @@ public class MainActivity extends Activity {
             return;
         }
         int sequence = (int) ((System.currentTimeMillis() / 1000L) & 0x7F);
-        byte[] frame = buildMideaRequestFrame(sequence, MIDEA_DEVICE_INFO_MSG_TYPE);
+        byte[] frame = buildMideaProtocol1DeviceInfoFrame(sequence);
         writeLog("PROBE_DEVICE_INFO\tservice=" + MIDEA_WRITE_SERVICE + "\tcharacteristic=" +
                 MIDEA_WRITE_CHARACTERISTIC + "\tmsg_type=" + MIDEA_DEVICE_INFO_MSG_TYPE +
-                "\tframe_hex=" + hex(frame));
+                "\tprotocol=MedicaProtocol1\tframe_hex=" + hex(frame));
         try {
             boolean noResponse = (writeCharacteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0;
             if (Build.VERSION.SDK_INT >= 33) {
@@ -460,55 +460,32 @@ public class MainActivity extends Activity {
         }
     }
 
-    private byte[] buildMideaRequestFrame(int sequence, int messageType) {
-        byte[] frame = new byte[15];
-        frame[0] = 0x12;
-        frame[1] = (byte) 0xEF;
-        frame[2] = 0;
-        frame[3] = (byte) frame.length;
-        frame[4] = 0;
-        frame[5] = 2; // Request
-        frame[6] = (byte) sequence;
-        frame[7] = crc8(frame, 0, 7);
-        frame[8] = (byte) messageType; // protocol stores this field as one byte
-        frame[9] = (byte) (sequence >>> 8);
-        frame[10] = (byte) sequence;
+    private byte[] buildMideaProtocol1DeviceInfoFrame(int sequence) {
+        // APK's Z400TWP3BleApi uses MedicaProtocol1: 00 02, frame count/index,
+        // sequence, device type 20489 (0x5009), msg type 518 (low byte 0x06),
+        // CRC32, then the protocol separator "$ _ @ -".
+        byte[] frame = new byte[16];
+        frame[0] = 0;
+        frame[1] = 2;
+        frame[2] = 1;
+        frame[3] = 0;
+        frame[4] = (byte) sequence;
+        frame[5] = 0x50;
+        frame[6] = 0x09;
+        frame[7] = 0x06;
         CRC32 crc32 = new CRC32();
-        crc32.update(frame, 0, 11);
+        crc32.update(frame, 0, 8);
         long value = crc32.getValue();
-        frame[11] = (byte) (value >>> 24);
-        frame[12] = (byte) (value >>> 16);
-        frame[13] = (byte) (value >>> 8);
-        frame[14] = (byte) value;
+        frame[8] = (byte) (value >>> 24);
+        frame[9] = (byte) (value >>> 16);
+        frame[10] = (byte) (value >>> 8);
+        frame[11] = (byte) value;
+        frame[12] = 0x24;
+        frame[13] = 0x5F;
+        frame[14] = 0x40;
+        frame[15] = 0x2D;
         return frame;
     }
-
-    private byte crc8(byte[] bytes, int offset, int length) {
-        int crc = 0xFF;
-        for (int i = offset; i < offset + length; i++) {
-            crc = CRC8_TABLE[(crc ^ (bytes[i] & 0xFF)) & 0xFF];
-        }
-        return (byte) (~crc & 0xFF);
-    }
-
-    private static final int[] CRC8_TABLE = new int[] {
-            0, 7, 14, 9, 28, 27, 18, 21, 56, 63, 54, 49, 36, 35, 42, 45,
-            112, 119, 126, 121, 108, 107, 98, 101, 72, 79, 70, 65, 84, 83, 90, 93,
-            224, 231, 238, 233, 252, 251, 242, 245, 216, 223, 214, 209, 196, 195, 202, 205,
-            144, 151, 158, 153, 140, 139, 130, 133, 168, 175, 166, 161, 180, 179, 186, 189,
-            199, 192, 201, 206, 219, 220, 213, 210, 255, 248, 241, 246, 227, 228, 237, 234,
-            183, 176, 185, 190, 171, 172, 165, 162, 143, 136, 129, 134, 147, 148, 157, 154,
-            39, 32, 41, 46, 59, 60, 53, 50, 31, 24, 17, 22, 3, 4, 13, 10,
-            87, 80, 89, 94, 75, 76, 69, 66, 111, 104, 97, 102, 115, 116, 125, 122,
-            137, 142, 135, 128, 149, 146, 155, 156, 177, 182, 191, 184, 173, 170, 163, 164,
-            249, 254, 247, 240, 229, 226, 235, 236, 193, 198, 207, 200, 221, 218, 211, 212,
-            105, 110, 103, 96, 117, 114, 123, 124, 81, 86, 95, 88, 77, 74, 67, 68,
-            25, 30, 23, 16, 5, 2, 11, 12, 33, 38, 47, 40, 61, 58, 51, 52,
-            78, 73, 64, 71, 82, 85, 92, 91, 118, 113, 120, 127, 106, 109, 100, 99,
-            62, 57, 48, 55, 34, 37, 44, 43, 6, 1, 8, 15, 26, 29, 20, 19,
-            174, 169, 160, 167, 178, 181, 188, 187, 150, 145, 152, 159, 138, 141, 132, 131,
-            222, 217, 208, 215, 194, 197, 204, 203, 230, 225, 232, 239, 250, 253, 244, 243
-    };
 
     private void logCharacteristic(String kind, UUID service, UUID characteristic, byte[] value, int status) {
         writeLog(kind + "\tservice=" + service + "\tcharacteristic=" + characteristic + "\tstatus=" + status + "\tvalue_hex=" + hex(value));
