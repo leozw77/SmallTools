@@ -1,0 +1,16 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.leozw77.sleepblecollector'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.leozw77.sleepblecollector'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+    }
+}
