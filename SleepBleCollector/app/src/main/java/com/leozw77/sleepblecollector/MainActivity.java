@@ -243,7 +243,11 @@ public class MainActivity extends Activity {
                         "\ttx_power=" + (result.getTxPower() == Integer.MIN_VALUE ? "unknown" : result.getTxPower()) +
                         "\traw=" + hex(adv));
             }
-            if (name != null && name.toLowerCase(Locale.ROOT).contains("midea")) {
+            // Some Midea sleep units advertise with an empty/unknown local name.
+            // Keep those candidates when their raw advertisement contains the
+            // Midea product marker, otherwise the real unit is hidden while
+            // nearby named devices are shown.
+            if (isMideaCandidate(name, adv)) {
                 Candidate old = candidates.get(address);
                 if (old == null) {
                     candidates.put(address, new Candidate(device, name, address, result.getRssi(), adv));
@@ -262,6 +266,13 @@ public class MainActivity extends Activity {
             writeLog("SCAN_FAILED\tcode=" + errorCode);
         }
     };
+
+    private boolean isMideaCandidate(String name, byte[] advertisement) {
+        String normalized = name == null ? "" : name.trim().toLowerCase(Locale.ROOT);
+        if (normalized.contains("midea")) return true;
+        String raw = hex(advertisement);
+        return normalized.isEmpty() && raw.contains("4D445A");
+    }
 
     private void renderCandidates() {
         runOnUiThread(() -> {
